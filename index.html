@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
@@ -102,6 +102,26 @@
             border-bottom: 1px solid #2a2a2a;
         }
 
+        .user-profile {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .profile-btn {
+            background: #2b2b2b;
+            border: 1px solid #3a3a3a;
+            padding: 8px 15px;
+            border-radius: 20px;
+            cursor: pointer;
+            color: white;
+            font-size: 0.8rem;
+        }
+
+        .profile-btn:hover {
+            background: #3a3a3a;
+        }
+
         .channel-info h2 {
             font-size: 1.2rem;
         }
@@ -168,6 +188,13 @@
             display: flex;
             align-items: center;
             gap: 8px;
+        }
+
+        .message-avatar {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            object-fit: cover;
         }
 
         .role-badge {
@@ -286,18 +313,18 @@
             display: flex;
             align-items: center;
             gap: 10px;
+            cursor: pointer;
+        }
+
+        .member-item:hover {
+            background: #1a1a1a;
         }
 
         .member-avatar {
             width: 32px;
             height: 32px;
-            background: #2b2b2b;
             border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1rem;
-            color: white;
+            object-fit: cover;
         }
 
         .member-name {
@@ -337,11 +364,9 @@
             margin: 50px auto;
             padding: 20px;
             width: 90%;
-            max-width: 800px;
+            max-width: 500px;
             border-radius: 10px;
             border: 1px solid #2a2a2a;
-            max-height: 80vh;
-            overflow-y: auto;
         }
 
         .modal-header {
@@ -357,6 +382,39 @@
             border: none;
             color: white;
             font-size: 1.5rem;
+            cursor: pointer;
+        }
+
+        .profile-preview {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .profile-avatar-preview {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid #2a2a2a;
+        }
+
+        .profile-input {
+            width: 100%;
+            padding: 12px;
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            color: white;
+            margin-bottom: 15px;
+        }
+
+        .save-profile-btn {
+            width: 100%;
+            padding: 12px;
+            background: #2b2b2b;
+            border: 1px solid #3a3a3a;
+            border-radius: 8px;
+            color: white;
             cursor: pointer;
         }
 
@@ -524,7 +582,8 @@
 
 <script>
     const ADMIN_USERNAME = "SStwendRT";
-    let messageListenerAttached = false;
+    let currentMessagesListener = null;
+    let currentChannelId = null;
     
     const firebaseConfig = {
         apiKey: "AIzaSyB9XzL1XzL1XzL1XzL1XzL1XzL1XzL1",
@@ -549,6 +608,7 @@
     let currentUser = null;
     let currentChannel = null;
     let isAdmin = false;
+    let messagesCache = new Map();
     
     async function loadMembers() {
         const membersList = document.getElementById('membersList');
@@ -563,7 +623,9 @@
         snapshot.forEach(child => {
             users.push({
                 id: child.key,
-                username: child.val().username
+                username: child.val().username,
+                displayName: child.val().displayName,
+                avatar: child.val().avatar
             });
         });
         
@@ -578,11 +640,15 @@
                 }
             }
             
+            const displayName = user.displayName || user.username;
+            const avatarUrl = user.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=2b2b2b&color=white&size=32`;
+            
             const memberDiv = document.createElement('div');
             memberDiv.className = 'member-item';
+            memberDiv.onclick = () => showUserProfile(user.id);
             memberDiv.innerHTML = `
-                <div class="member-avatar">${user.username.charAt(0).toUpperCase()}</div>
-                <div class="member-name">${escapeHtml(user.username)} ${user.username === ADMIN_USERNAME ? '👑' : ''}</div>
+                <img class="member-avatar" src="${avatarUrl}" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=2b2b2b&color=white&size=32'">
+                <div class="member-name">${escapeHtml(displayName)} ${user.username === ADMIN_USERNAME ? '👑' : ''}</div>
                 ${roleHtml}
             `;
             membersList.appendChild(memberDiv);
@@ -607,19 +673,23 @@
             currentChannel = defaultChannel.key;
         }
         
+        const channels = [];
         snapshot.forEach(child => {
-            const channel = child.val();
+            channels.push({ key: child.key, ...child.val() });
+        });
+        
+        channels.sort((a, b) => a.createdAt - b.createdAt);
+        
+        channels.forEach(channel => {
             const channelDiv = document.createElement('div');
-            channelDiv.className = `channel-item ${currentChannel === child.key ? 'active' : ''}`;
+            channelDiv.className = `channel-item ${currentChannel === channel.key ? 'active' : ''}`;
             channelDiv.textContent = `# ${channel.displayName || channel.name}`;
-            channelDiv.onclick = () => switchChannel(child.key);
+            channelDiv.onclick = () => switchChannel(channel.key);
             channelsList.appendChild(channelDiv);
         });
         
-        if (!currentChannel && snapshot.numChildren() > 0) {
-            snapshot.forEach(child => {
-                if (!currentChannel) currentChannel = child.key;
-            });
+        if (!currentChannel && channels.length > 0) {
+            currentChannel = channels[0].key;
         }
         
         updateChannelName();
@@ -635,17 +705,57 @@
         });
     }
     
-    function switchChannel(channelId) {
+    async function switchChannel(channelId) {
         if (currentChannel === channelId) return;
-        currentChannel = channelId;
-        loadChannelsSidebar();
-        document.getElementById('chatMessages').innerHTML = '';
         
-        if (messageListenerAttached) {
-            messagesRef.child(currentChannel).off();
+        if (currentMessagesListener) {
+            messagesRef.child(currentChannel).off('child_added', currentMessagesListener);
         }
-        listenForMessages();
+        
+        currentChannel = channelId;
+        currentChannelId = channelId;
+        
+        const messagesContainer = document.getElementById('chatMessages');
+        messagesContainer.innerHTML = '';
+        messagesCache.clear();
+        
+        loadChannelsSidebar();
+        await loadMessagesForChannel(channelId);
         updateChannelName();
+    }
+    
+    async function loadMessagesForChannel(channelId) {
+        const messagesContainer = document.getElementById('chatMessages');
+        const snapshot = await messagesRef.child(channelId).orderByChild('timestamp').once('value');
+        
+        const messages = [];
+        snapshot.forEach(child => {
+            messages.push({ key: child.key, ...child.val() });
+        });
+        
+        messages.sort((a, b) => a.timestamp - b.timestamp);
+        
+        for (const message of messages) {
+            await displayMessage(message, message.key);
+            messagesCache.set(message.key, message);
+        }
+        
+        scrollToBottom();
+        
+        if (currentMessagesListener) {
+            messagesRef.child(channelId).off('child_added', currentMessagesListener);
+        }
+        
+        currentMessagesListener = messagesRef.child(channelId).orderByChild('timestamp').startAt(Date.now()).on('child_added', async function(snapshot) {
+            const message = snapshot.val();
+            const messageKey = snapshot.key;
+            
+            if (messagesCache.has(messageKey)) return;
+            
+            await displayMessage(message, messageKey);
+            messagesCache.set(messageKey, message);
+            scrollToBottom();
+        });
     }
     
     async function sendMessageWithMedia(type) {
@@ -657,15 +767,22 @@
             confirmButtonText: 'Send',
             cancelButtonText: 'Cancel',
             background: '#0a0a0a',
-            color: 'white',
-            customClass: {
-                popup: 'swal2-popup',
-                input: 'swal2-input'
-            }
+            color: 'white'
         });
         
-        if (url) {
+        if (url && isValidUrl(url)) {
             sendMessage(url, type);
+        } else if (url) {
+            Swal.fire('Error', 'Invalid URL format', 'error');
+        }
+    }
+    
+    function isValidUrl(string) {
+        try {
+            new URL(string);
+            return true;
+        } catch (_) {
+            return false;
         }
     }
     
@@ -687,9 +804,14 @@
         sendBtn.disabled = true;
         
         try {
+            const userData = await usersRef.child(currentUser.id).once('value');
+            const userInfo = userData.val();
+            
             const message = {
                 text: text.trim(),
                 username: currentUser.username,
+                displayName: userInfo.displayName || currentUser.username,
+                avatar: userInfo.avatar || null,
                 userId: currentUser.id,
                 timestamp: Date.now(),
                 type: type,
@@ -698,30 +820,12 @@
             
             await messagesRef.child(currentChannel).push(message);
             document.getElementById('messageInput').value = '';
-            scrollToBottom();
         } catch (error) {
             console.error('Send error:', error);
+            Swal.fire('Error', 'Failed to send message', 'error');
         } finally {
             sendBtn.disabled = false;
         }
-    }
-    
-    function listenForMessages() {
-        if (!currentChannel) return;
-        
-        messageListenerAttached = true;
-        const channelMessagesRef = messagesRef.child(currentChannel);
-        
-        channelMessagesRef.orderByChild('timestamp').limitToLast(50).on('child_added', async function(snapshot) {
-            const message = snapshot.val();
-            const messageKey = snapshot.key;
-            
-            const existingMsg = document.querySelector(`.message[data-key="${messageKey}"]`);
-            if (existingMsg) return;
-            
-            await displayMessage(message, messageKey);
-            scrollToBottom();
-        });
     }
     
     async function displayMessage(message, key) {
@@ -747,16 +851,22 @@
             }
         }
         
+        const displayName = message.displayName || message.username;
+        const avatarUrl = message.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=2b2b2b&color=white&size=24`;
+        
         let content = '';
-        if (message.type === 'image' || message.type === 'gif') {
-            content = `<img src="${escapeHtml(message.text)}" onclick="window.open('${escapeHtml(message.text)}', '_blank')" style="max-width: 300px; max-height: 300px; border-radius: 10px; cursor: pointer;">`;
+        if (message.type === 'image') {
+            content = `<img src="${escapeHtml(message.text)}" onclick="window.open('${escapeHtml(message.text)}', '_blank')" style="max-width: 300px; max-height: 300px; border-radius: 10px; cursor: pointer;" onerror="this.src='https://placehold.co/300x200/2b2b2b/white?text=Invalid+Image'">`;
+        } else if (message.type === 'gif') {
+            content = `<img src="${escapeHtml(message.text)}" style="max-width: 300px; max-height: 300px; border-radius: 10px; cursor: pointer;" onclick="window.open('${escapeHtml(message.text)}', '_blank')" onerror="this.src='https://placehold.co/300x200/2b2b2b/white?text=Invalid+GIF'">`;
         } else {
             content = `<div class="message-text">${escapeHtml(message.text)}</div>`;
         }
         
         messageDiv.innerHTML = `
             <div class="message-info">
-                <span>${escapeHtml(message.username)}</span>
+                <img class="message-avatar" src="${avatarUrl}" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=2b2b2b&color=white&size=24'">
+                <span>${escapeHtml(displayName)}</span>
                 ${userRole}
                 <span>• ${timeStr}</span>
             </div>
@@ -777,6 +887,107 @@
         if (messagesContainer) {
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
+    }
+    
+    function showProfileModal() {
+        Swal.fire({
+            title: 'Edit Profile',
+            html: `
+                <div class="profile-preview">
+                    <img id="avatarPreview" class="profile-avatar-preview" src="${currentUser.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.displayName || currentUser.username)}&background=2b2b2b&color=white&size=100`}">
+                </div>
+                <input id="displayNameInput" class="profile-input" placeholder="Display Name" value="${escapeHtml(currentUser.displayName || currentUser.username)}">
+                <input id="avatarUrlInput" class="profile-input" placeholder="Avatar URL (optional)" value="${currentUser.avatar || ''}">
+            `,
+            showCancelButton: true,
+            confirmButtonText: 'Save',
+            cancelButtonText: 'Cancel',
+            didOpen: () => {
+                const avatarUrlInput = document.getElementById('avatarUrlInput');
+                const avatarPreview = document.getElementById('avatarPreview');
+                
+                avatarUrlInput.oninput = () => {
+                    if (avatarUrlInput.value) {
+                        avatarPreview.src = avatarUrlInput.value;
+                        avatarPreview.onerror = () => {
+                            avatarPreview.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(document.getElementById('displayNameInput').value)}&background=2b2b2b&color=white&size=100`;
+                        };
+                    } else {
+                        const name = document.getElementById('displayNameInput').value;
+                        avatarPreview.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=2b2b2b&color=white&size=100`;
+                    }
+                };
+                
+                const displayNameInput = document.getElementById('displayNameInput');
+                displayNameInput.oninput = () => {
+                    if (!avatarUrlInput.value) {
+                        avatarPreview.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(displayNameInput.value)}&background=2b2b2b&color=white&size=100`;
+                    }
+                };
+            },
+            preConfirm: () => {
+                const displayName = document.getElementById('displayNameInput').value.trim();
+                const avatarUrl = document.getElementById('avatarUrlInput').value.trim();
+                
+                if (!displayName) {
+                    Swal.showValidationMessage('Display name is required');
+                    return false;
+                }
+                
+                return { displayName, avatarUrl: avatarUrl || null };
+            }
+        }).then(async (result) => {
+            if (result.value) {
+                await usersRef.child(currentUser.id).update({
+                    displayName: result.value.displayName,
+                    avatar: result.value.avatarUrl
+                });
+                
+                currentUser.displayName = result.value.displayName;
+                currentUser.avatar = result.value.avatarUrl;
+                
+                Swal.fire('Success', 'Profile updated', 'success');
+                loadMembers();
+                
+                const messagesContainer = document.getElementById('chatMessages');
+                messagesContainer.innerHTML = '';
+                messagesCache.clear();
+                await loadMessagesForChannel(currentChannel);
+            }
+        });
+    }
+    
+    async function showUserProfile(userId) {
+        const userSnapshot = await usersRef.child(userId).once('value');
+        const user = userSnapshot.val();
+        if (!user) return;
+        
+        const displayName = user.displayName || user.username;
+        const avatarUrl = user.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=2b2b2b&color=white&size=100`;
+        
+        let roleText = '';
+        const roleSnapshot = await userRolesRef.child(userId).once('value');
+        if (roleSnapshot.exists()) {
+            const roleId = roleSnapshot.val();
+            const roleData = await rolesRef.child(roleId).once('value');
+            if (roleData.exists()) {
+                roleText = `<div style="margin-top: 10px; padding: 5px 10px; background: ${roleData.val().color}; border-radius: 5px; display: inline-block;">Role: ${roleData.val().name}</div>`;
+            }
+        }
+        
+        Swal.fire({
+            title: displayName,
+            html: `
+                <div style="text-align: center;">
+                    <img src="${avatarUrl}" style="width: 100px; height: 100px; border-radius: 50%; margin-bottom: 15px;" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=2b2b2b&color=white&size=100'">
+                    <div><strong>Username:</strong> ${escapeHtml(user.username)}</div>
+                    ${roleText}
+                </div>
+            `,
+            confirmButtonText: 'Close',
+            background: '#0a0a0a',
+            color: 'white'
+        });
     }
     
     function showAdminPanel() {
@@ -803,10 +1014,11 @@
         
         snapshot.forEach(child => {
             const user = child.val();
+            const displayName = user.displayName || user.username;
             const userDiv = document.createElement('div');
             userDiv.className = 'user-item';
             userDiv.innerHTML = `
-                <span>${escapeHtml(user.username)} ${user.username === ADMIN_USERNAME ? '👑' : ''}</span>
+                <span>${escapeHtml(displayName)} (${escapeHtml(user.username)}) ${user.username === ADMIN_USERNAME ? '👑' : ''}</span>
                 <div>
                     <button class="ban-btn" onclick="banUser('${child.key}', '${escapeHtml(user.username)}')">Ban</button>
                     <button class="mute-btn" onclick="muteUser('${child.key}', '${escapeHtml(user.username)}')">Mute</button>
@@ -871,7 +1083,6 @@
                 '86400000': '1 day',
                 '604800000': '1 week'
             },
-            inputPlaceholder: 'Select ban duration',
             showCancelButton: true,
             confirmButtonText: 'Ban',
             cancelButtonText: 'Cancel'
@@ -899,7 +1110,6 @@
                 '3600000': '1 hour',
                 '86400000': '1 day'
             },
-            inputPlaceholder: 'Select mute duration',
             showCancelButton: true,
             confirmButtonText: 'Mute',
             cancelButtonText: 'Cancel'
@@ -942,6 +1152,7 @@
         if (roleId) {
             await userRolesRef.child(userId).set(roleId);
             Swal.fire('Success', `Role assigned to ${username}`, 'success');
+            loadMembers();
         }
     }
     
@@ -1096,9 +1307,8 @@
     }
     
     function logout() {
-        if (messageListenerAttached && currentChannel) {
-            messagesRef.child(currentChannel).off();
-            messageListenerAttached = false;
+        if (currentMessagesListener && currentChannel) {
+            messagesRef.child(currentChannel).off('child_added', currentMessagesListener);
         }
         currentUser = null;
         localStorage.removeItem('chatUser');
@@ -1106,6 +1316,9 @@
     }
     
     function renderMainApp() {
+        const displayName = currentUser.displayName || currentUser.username;
+        const avatarUrl = currentUser.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=2b2b2b&color=white&size=32`;
+        
         const appDiv = document.getElementById('app');
         appDiv.innerHTML = `
             <div class="app-container">
@@ -1121,7 +1334,11 @@
                             <h2 id="channelName"># Loading...</h2>
                             <p>Text channel</p>
                         </div>
-                        <button class="logout-btn" onclick="logout()">Logout</button>
+                        <div class="user-profile">
+                            <img src="${avatarUrl}" style="width: 32px; height: 32px; border-radius: 50%;" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=2b2b2b&color=white&size=32'">
+                            <button class="profile-btn" onclick="showProfileModal()">${escapeHtml(displayName)}</button>
+                            <button class="logout-btn" onclick="logout()">Logout</button>
+                        </div>
                     </div>
                     <div class="chat-messages" id="chatMessages"></div>
                     <div class="bottom-panel">
@@ -1171,7 +1388,10 @@
         
         loadChannelsSidebar();
         loadMembers();
-        listenForMessages();
+        
+        if (currentChannel) {
+            loadMessagesForChannel(currentChannel);
+        }
         
         const messageInput = document.getElementById('messageInput');
         if (messageInput) {
@@ -1259,7 +1479,9 @@
                         userFound = true;
                         currentUser = {
                             id: childSnapshot.key,
-                            username: data.username
+                            username: data.username,
+                            displayName: data.displayName,
+                            avatar: data.avatar
                         };
                     }
                 });
@@ -1280,6 +1502,14 @@
                     
                     localStorage.setItem('chatUser', JSON.stringify(currentUser));
                     isAdmin = currentUser.username === ADMIN_USERNAME;
+                    
+                    const snapshot = await channelsRef.once('value');
+                    if (snapshot.numChildren() > 0) {
+                        snapshot.forEach(child => {
+                            if (!currentChannel) currentChannel = child.key;
+                        });
+                    }
+                    
                     renderMainApp();
                 } else {
                     errorElement.textContent = 'Invalid password';
@@ -1300,15 +1530,27 @@
                 await newUserRef.set({
                     username: username,
                     password: password,
+                    displayName: username,
+                    avatar: null,
                     createdAt: Date.now()
                 });
                 
                 currentUser = {
                     id: newUserRef.key,
-                    username: username
+                    username: username,
+                    displayName: username,
+                    avatar: null
                 };
                 localStorage.setItem('chatUser', JSON.stringify(currentUser));
                 isAdmin = currentUser.username === ADMIN_USERNAME;
+                
+                const snapshot = await channelsRef.once('value');
+                if (snapshot.numChildren() > 0) {
+                    snapshot.forEach(child => {
+                        if (!currentChannel) currentChannel = child.key;
+                    });
+                }
+                
                 renderMainApp();
             }
         } catch (error) {
@@ -1348,6 +1590,8 @@
     window.sendMessage = sendMessage;
     window.switchAdminTab = switchAdminTab;
     window.logout = logout;
+    window.showProfileModal = showProfileModal;
+    window.showUserProfile = showUserProfile;
     
     async function init() {
         const savedUser = localStorage.getItem('chatUser');
@@ -1356,9 +1600,12 @@
                 const userData = JSON.parse(savedUser);
                 const userCheck = await usersRef.child(userData.id).once('value');
                 if (userCheck.exists()) {
+                    const userVal = userCheck.val();
                     currentUser = {
                         id: userData.id,
-                        username: userData.username
+                        username: userVal.username,
+                        displayName: userVal.displayName,
+                        avatar: userVal.avatar
                     };
                     
                     const isBanned = await bansRef.child(currentUser.id).once('value');
@@ -1374,6 +1621,14 @@
                     }
                     
                     isAdmin = currentUser.username === ADMIN_USERNAME;
+                    
+                    const snapshot = await channelsRef.once('value');
+                    if (snapshot.numChildren() > 0) {
+                        snapshot.forEach(child => {
+                            if (!currentChannel) currentChannel = child.key;
+                        });
+                    }
+                    
                     renderMainApp();
                     return;
                 }
