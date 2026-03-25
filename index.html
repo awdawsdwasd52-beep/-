@@ -44,6 +44,7 @@
             font-weight: bold;
             letter-spacing: 1px;
             border-bottom: 1px solid #2a2a2a;
+            position: relative;
         }
 
         .chat-messages {
@@ -210,6 +211,11 @@
             background: #3a3a3a;
         }
 
+        .auth-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
         .auth-switch {
             text-align: center;
             color: #888;
@@ -341,6 +347,7 @@
         const username = document.getElementById('username').value.trim();
         const password = document.getElementById('password').value;
         const errorElement = document.getElementById('errorMessage');
+        const submitButton = document.getElementById('submitButton');
         
         if (!username || !password) {
             errorElement.textContent = 'Заполните все поля';
@@ -357,54 +364,78 @@
             return;
         }
         
-        errorElement.textContent = 'Проверка...';
+        submitButton.disabled = true;
+        submitButton.textContent = 'Проверка...';
+        errorElement.textContent = '';
         
-        if (isLoginMode) {
-            const userSnapshot = await usersRef.orderByChild('username').equalTo(username).once('value');
-            
-            if (!userSnapshot.exists()) {
-                errorElement.textContent = 'Пользователь не найден';
-                return;
-            }
-            
-            let userFound = false;
-            userSnapshot.forEach((childSnapshot) => {
-                const userData = childSnapshot.val();
-                if (userData.password === password) {
-                    userFound = true;
+        try {
+            if (isLoginMode) {
+                const userSnapshot = await usersRef.orderByChild('username').equalTo(username).once('value');
+                
+                if (!userSnapshot.exists()) {
+                    errorElement.textContent = 'Пользователь не найден';
+                    submitButton.disabled = false;
+                    submitButton.textContent = 'Войти';
+                    return;
+                }
+                
+                let userFound = false;
+                let userData = null;
+                let userId = null;
+                
+                userSnapshot.forEach((childSnapshot) => {
+                    const data = childSnapshot.val();
+                    if (data.password === password) {
+                        userFound = true;
+                        userData = data;
+                        userId = childSnapshot.key;
+                    }
+                });
+                
+                if (userFound) {
                     currentUser = {
-                        id: childSnapshot.key,
+                        id: userId,
                         username: userData.username
                     };
+                    loginSuccess();
+                } else {
+                    errorElement.textContent = 'Неверный пароль';
+                    submitButton.disabled = false;
+                    submitButton.textContent = 'Войти';
                 }
-            });
-            
-            if (userFound) {
-                loginSuccess();
             } else {
-                errorElement.textContent = 'Неверный пароль';
+                const existingUser = await usersRef.orderByChild('username').equalTo(username).once('value');
+                
+                if (existingUser.exists()) {
+                    errorElement.textContent = 'Этот никнейм уже занят';
+                    submitButton.disabled = false;
+                    submitButton.textContent = 'Зарегистрироваться';
+                    return;
+                }
+                
+                const newUserRef = usersRef.push();
+                await newUserRef.set({
+                    username: username,
+                    password: password,
+                    createdAt: Date.now()
+                });
+                
+                currentUser = {
+                    id: newUserRef.key,
+                    username: username
+                };
+                
+                loginSuccess();
             }
-        } else {
-            const existingUser = await usersRef.orderByChild('username').equalTo(username).once('value');
-            
-            if (existingUser.exists()) {
-                errorElement.textContent = 'Этот никнейм уже занят';
-                return;
+        } catch (error) {
+            console.error('Auth error:', error);
+            errorElement.textContent = 'Ошибка соединения. Попробуйте позже.';
+            submitButton.disabled = false;
+            if (isLoginMode) {
+                submitButton.textContent = 'Войти';
+            } else {
+                submitButton.textContent = 'Зарегистрироваться';
             }
-            
-            const newUserRef = usersRef.push();
-            await newUserRef.set({
-                username: username,
-                password: password,
-                createdAt: Date.now()
-            });
-            
-            currentUser = {
-                id: newUserRef.key,
-                username: username
-            };
-            
-            loginSuccess();
         }
     }
     
@@ -424,7 +455,9 @@
         document.getElementById('errorMessage').textContent = '';
         isLoginMode = false;
         document.getElementById('authTitle').textContent = 'Регистрация';
-        document.getElementById('submitButton').textContent = 'Зарегистрироваться';
+        const submitButton = document.getElementById('submitButton');
+        submitButton.textContent = 'Зарегистрироваться';
+        submitButton.disabled = false;
         document.querySelector('.auth-switch').textContent = 'Уже есть аккаунт? Войти';
     }
     
