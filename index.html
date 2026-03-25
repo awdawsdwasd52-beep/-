@@ -429,13 +429,7 @@
             }
         } catch (error) {
             console.error('Auth error:', error);
-            if (error.code === 'PERMISSION_DENIED') {
-                errorElement.textContent = 'Ошибка доступа к базе данных. Проверьте правила безопасности Firebase.';
-            } else if (error.message.includes('network')) {
-                errorElement.textContent = 'Ошибка соединения. Проверьте интернет и настройки Firebase.';
-            } else {
-                errorElement.textContent = 'Ошибка: ' + (error.message || 'Неизвестная ошибка');
-            }
+            errorElement.textContent = 'Ошибка: ' + (error.message || 'Неизвестная ошибка');
             submitButton.disabled = false;
             if (isLoginMode) {
                 submitButton.textContent = 'Войти';
@@ -479,20 +473,17 @@
             const message = {
                 text: text,
                 username: currentUser.username,
-                timestamp: firebase.database.ServerValue.TIMESTAMP,
+                timestamp: Date.now(),
                 userId: currentUser.id
             };
             
             await messagesRef.push(message);
             input.value = '';
             scrollToBottom();
+            document.getElementById('statusText').textContent = 'Status: Work';
         } catch (error) {
             console.error('Send error:', error);
-            if (error.code === 'PERMISSION_DENIED') {
-                document.getElementById('statusText').textContent = 'Status: Error - Нет прав на запись в чат';
-            } else {
-                document.getElementById('statusText').textContent = 'Status: Error - Не удалось отправить';
-            }
+            document.getElementById('statusText').textContent = 'Status: Error - ' + (error.message || 'Не удалось отправить');
         } finally {
             sendBtn.disabled = false;
             input.focus();
@@ -513,9 +504,7 @@
         
         messagesRef.on('error', (error) => {
             console.error('Listen error:', error);
-            if (error.code === 'PERMISSION_DENIED') {
-                document.getElementById('statusText').textContent = 'Status: Error - Нет прав на чтение чата';
-            }
+            document.getElementById('statusText').textContent = 'Status: Error - Ошибка чтения чата';
         });
     }
     
@@ -526,7 +515,7 @@
         messageDiv.setAttribute('data-key', key);
         
         let timeStr = 'только что';
-        if (message.timestamp && typeof message.timestamp === 'number') {
+        if (message.timestamp) {
             const date = new Date(message.timestamp);
             timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         }
