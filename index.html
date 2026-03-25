@@ -628,6 +628,12 @@
             color: white;
             margin: 5px;
         }
+        
+        .loading-text {
+            color: #888;
+            text-align: center;
+            padding: 20px;
+        }
     </style>
 </head>
 <body>
@@ -636,7 +642,6 @@
 <script>
     const ADMIN_USERNAME = "SStwendRT";
     let currentMessagesListener = null;
-    let lastMessageTime = 0;
     
     const firebaseConfig = {
         apiKey: "AIzaSyB9XzL1XzL1XzL1XzL1XzL1XzL1XzL1",
@@ -659,10 +664,9 @@
     const userRolesRef = database.ref('user_roles');
     
     let currentUser = null;
-    let currentChannel = null;
+    let currentChannelId = null;
     let isAdmin = false;
     let messagesCache = new Map();
-    let channelConfigCache = new Map();
     
     function getDirectGifUrl(url) {
         if (url.includes('tenor.com')) {
@@ -672,49 +676,6 @@
             }
         }
         return url;
-    }
-    
-    async function uploadFileToImgBB(file) {
-        return new Promise((resolve, reject) => {
-            const formData = new FormData();
-            formData.append('image', file);
-            
-            fetch('https://api.imgbb.com/1/upload?key=YOUR_IMGBB_API_KEY', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    resolve(data.data.url);
-                } else {
-                    reject('Upload failed');
-                }
-            })
-            .catch(reject);
-        });
-    }
-    
-    async function uploadImageToCloudinary(file) {
-        return new Promise((resolve, reject) => {
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('upload_preset', 'chat_upload');
-            
-            fetch('https://api.cloudinary.com/v1_1/demo/image/upload', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.secure_url) {
-                    resolve(data.secure_url);
-                } else {
-                    reject('Upload failed');
-                }
-            })
-            .catch(reject);
-        });
     }
     
     async function uploadFile(file) {
@@ -814,59 +775,12 @@
         }
     }
     
-    async function showAvatarUploadDialog() {
-        const { value: choice } = await Swal.fire({
-            title: 'Upload Avatar',
-            input: 'select',
-            inputOptions: {
-                'url': 'Paste URL',
-                'file': 'Upload File'
-            },
-            inputPlaceholder: 'Choose option',
-            showCancelButton: true,
-            confirmButtonText: 'Next',
-            cancelButtonText: 'Cancel'
-        });
-        
-        if (choice === 'url') {
-            const { value: url } = await Swal.fire({
-                title: 'Avatar URL',
-                input: 'url',
-                inputPlaceholder: 'https://example.com/avatar.jpg',
-                showCancelButton: true,
-                confirmButtonText: 'Save'
-            });
-            if (url) {
-                await usersRef.child(currentUser.id).update({ avatar: url });
-                currentUser.avatar = url;
-                Swal.fire('Success', 'Avatar updated', 'success');
-                renderMainApp();
-            }
-        } else if (choice === 'file') {
-            const { value: file } = await Swal.fire({
-                title: 'Select Image',
-                input: 'file',
-                inputAttributes: {
-                    'accept': 'image/*',
-                    'aria-label': 'Choose image'
-                },
-                showCancelButton: true,
-                confirmButtonText: 'Upload'
-            });
-            if (file) {
-                const avatarUrl = await uploadFile(file);
-                await usersRef.child(currentUser.id).update({ avatar: avatarUrl });
-                currentUser.avatar = avatarUrl;
-                Swal.fire('Success', 'Avatar updated', 'success');
-                renderMainApp();
-            }
-        }
-    }
-    
     async function checkChannelPermissions(channelId, userId, action = 'send') {
+        if (!channelId) return false;
+        
         const channelSnapshot = await channelsRef.child(channelId).once('value');
         const channel = channelSnapshot.val();
-        if (!channel) return true;
+        if (!channel) return action === 'send' ? false : true;
         
         if (channel.owner === userId) return true;
         
@@ -874,12 +788,12 @@
         const userRoleId = userRoleSnapshot.val();
         
         if (action === 'send') {
-            if (channel.allowedToSend === 'all') return true;
+            if (!channel.allowedToSend || channel.allowedToSend === 'all') return true;
             if (channel.allowedToSend === 'roles' && userRoleId && channel.allowedRoles?.includes(userRoleId)) return true;
             if (channel.allowedToSend === 'users' && channel.allowedUsers?.includes(userId)) return true;
             return false;
         } else if (action === 'view') {
-            if (channel.allowedToView === 'all') return true;
+            if (!channel.allowedToView || channel.allowedToView === 'all') return true;
             if (channel.allowedToView === 'roles' && userRoleId && channel.viewRoles?.includes(userRoleId)) return true;
             if (channel.allowedToView === 'users' && channel.viewUsers?.includes(userId)) return true;
             return false;
@@ -888,6 +802,8 @@
     }
     
     async function checkSlowmode(channelId, userId) {
+        if (!channelId) return true;
+        
         const channelSnapshot = await channelsRef.child(channelId).once('value');
         const channel = channelSnapshot.val();
         if (!channel || !channel.slowmode || channel.slowmode === 0) return true;
@@ -1024,6 +940,7 @@
                 slowmode: formValues.slowmode
             });
             Swal.fire('Success', 'Channel configuration saved', 'success');
+            updateSlowmodeIndicator();
         }
     }
     
@@ -1140,8 +1057,9 @@
         });
         
         if (formValues) {
-            const channelId = channelsRef.push().key;
-            await channelsRef.child(channelId).set({
+            const newChannelRef = channelsRef.push();
+            const channelId = newChannelRef.key;
+            await newChannelRef.set({
                 name: channelName.toLowerCase().replace(/\s/g, '-'),
                 displayName: channelName,
                 createdBy: currentUser.username,
@@ -1157,9 +1075,8 @@
             });
             
             Swal.fire('Success', `Channel #${channelName} created`, 'success');
-            loadChannelsList();
-            loadChannelsSidebar();
-            switchChannel(channelId);
+            await loadChannelsSidebar();
+            await switchChannel(channelId);
         }
     }
     
@@ -1167,7 +1084,7 @@
         const membersList = document.getElementById('membersList');
         if (!membersList) return;
         
-        membersList.innerHTML = '<div style="color:#888;">Loading...</div>';
+        membersList.innerHTML = '<div class="loading-text">Loading...</div>';
         
         const snapshot = await usersRef.once('value');
         membersList.innerHTML = '';
@@ -1212,12 +1129,14 @@
         const channelsList = document.getElementById('channelsList');
         if (!channelsList) return;
         
-        channelsList.innerHTML = '';
+        channelsList.innerHTML = '<div class="loading-text">Loading channels...</div>';
         
         const snapshot = await channelsRef.once('value');
+        channelsList.innerHTML = '';
         
         if (!snapshot.exists()) {
-            const defaultChannel = await channelsRef.push({
+            const defaultChannelRef = channelsRef.push();
+            await defaultChannelRef.set({
                 name: 'general',
                 displayName: 'General',
                 createdBy: 'system',
@@ -1227,46 +1146,58 @@
                 allowedToSend: 'all',
                 slowmode: 0
             });
-            currentChannel = defaultChannel.key;
+            currentChannelId = defaultChannelRef.key;
         }
         
         const channels = [];
         snapshot.forEach(child => {
-            channels.push({ key: child.key, ...child.val() });
+            channels.push({ id: child.key, ...child.val() });
         });
         
         channels.sort((a, b) => a.createdAt - b.createdAt);
         
+        let hasAccessibleChannel = false;
+        
         for (const channel of channels) {
-            const canView = await checkChannelPermissions(channel.key, currentUser.id, 'view');
-            if (!canView && channel.key !== currentChannel) continue;
-            
-            const channelDiv = document.createElement('div');
-            channelDiv.className = `channel-item ${currentChannel === channel.key ? 'active' : ''}`;
-            channelDiv.textContent = `# ${channel.displayName || channel.name}`;
-            channelDiv.onclick = () => switchChannel(channel.key);
-            channelsList.appendChild(channelDiv);
+            const canView = await checkChannelPermissions(channel.id, currentUser.id, 'view');
+            if (canView) {
+                hasAccessibleChannel = true;
+                const channelDiv = document.createElement('div');
+                channelDiv.className = `channel-item ${currentChannelId === channel.id ? 'active' : ''}`;
+                channelDiv.textContent = `# ${channel.displayName || channel.name}`;
+                channelDiv.onclick = () => switchChannel(channel.id);
+                channelsList.appendChild(channelDiv);
+            }
         }
         
-        if (!currentChannel && channels.length > 0) {
+        if (!hasAccessibleChannel && channels.length > 0) {
             for (const channel of channels) {
-                const canView = await checkChannelPermissions(channel.key, currentUser.id, 'view');
+                const canView = await checkChannelPermissions(channel.id, currentUser.id, 'view');
                 if (canView) {
-                    currentChannel = channel.key;
+                    currentChannelId = channel.id;
                     break;
                 }
             }
         }
         
-        updateChannelName();
-        updateSlowmodeIndicator();
+        if (!currentChannelId && channels.length > 0) {
+            currentChannelId = channels[0].id;
+        }
+        
+        if (currentChannelId) {
+            updateChannelName();
+            updateSlowmodeIndicator();
+            await loadMessagesForChannel(currentChannelId);
+        } else if (channelsList.innerHTML === '') {
+            channelsList.innerHTML = '<div class="loading-text">No channels available</div>';
+        }
     }
     
     function updateSlowmodeIndicator() {
         const indicator = document.getElementById('slowmodeIndicator');
-        if (!indicator) return;
+        if (!indicator || !currentChannelId) return;
         
-        channelsRef.child(currentChannel).once('value', (snapshot) => {
+        channelsRef.child(currentChannelId).once('value', (snapshot) => {
             const channel = snapshot.val();
             if (channel && channel.slowmode && channel.slowmode > 0) {
                 indicator.textContent = `Slow Mode: ${channel.slowmode}s`;
@@ -1278,8 +1209,8 @@
     }
     
     function updateChannelName() {
-        if (!currentChannel) return;
-        channelsRef.child(currentChannel).once('value', (snapshot) => {
+        if (!currentChannelId) return;
+        channelsRef.child(currentChannelId).once('value', (snapshot) => {
             const channel = snapshot.val();
             if (channel) {
                 document.getElementById('channelName').textContent = `# ${channel.displayName || channel.name}`;
@@ -1289,76 +1220,93 @@
     }
     
     async function switchChannel(channelId) {
+        if (!channelId) return;
+        
         const canView = await checkChannelPermissions(channelId, currentUser.id, 'view');
         if (!canView) {
             Swal.fire('Access Denied', 'You do not have permission to view this channel', 'error');
             return;
         }
         
-        if (currentChannel === channelId) return;
+        if (currentChannelId === channelId) return;
         
-        if (currentMessagesListener && currentChannel) {
-            messagesRef.child(currentChannel).off('child_added', currentMessagesListener);
+        if (currentMessagesListener && currentChannelId) {
+            messagesRef.child(currentChannelId).off('child_added', currentMessagesListener);
         }
         
-        currentChannel = channelId;
+        currentChannelId = channelId;
         
         const messagesContainer = document.getElementById('chatMessages');
-        messagesContainer.innerHTML = '';
+        if (messagesContainer) {
+            messagesContainer.innerHTML = '';
+        }
         messagesCache.clear();
         
-        loadChannelsSidebar();
+        await loadChannelsSidebar();
         await loadMessagesForChannel(channelId);
         updateChannelName();
     }
     
     async function loadMessagesForChannel(channelId) {
+        if (!channelId) return;
+        
         const messagesContainer = document.getElementById('chatMessages');
-        const snapshot = await messagesRef.child(channelId).orderByChild('timestamp').once('value');
+        if (!messagesContainer) return;
         
-        const messages = [];
-        snapshot.forEach(child => {
-            messages.push({ key: child.key, ...child.val() });
-        });
+        messagesContainer.innerHTML = '<div class="loading-text">Loading messages...</div>';
         
-        messages.sort((a, b) => a.timestamp - b.timestamp);
-        
-        for (const message of messages) {
-            await displayMessage(message, message.key);
-            messagesCache.set(message.key, message);
-        }
-        
-        scrollToBottom();
-        
-        if (currentMessagesListener) {
-            messagesRef.child(channelId).off('child_added', currentMessagesListener);
-        }
-        
-        currentMessagesListener = messagesRef.child(channelId).orderByChild('timestamp').startAt(Date.now()).on('child_added', async function(snapshot) {
-            const message = snapshot.val();
-            const messageKey = snapshot.key;
+        try {
+            const snapshot = await messagesRef.child(channelId).orderByChild('timestamp').once('value');
             
-            if (messagesCache.has(messageKey)) return;
+            const messages = [];
+            snapshot.forEach(child => {
+                messages.push({ key: child.key, ...child.val() });
+            });
             
-            const canView = await checkChannelPermissions(message.channelId, currentUser.id, 'view');
-            if (!canView) return;
+            messages.sort((a, b) => a.timestamp - b.timestamp);
             
-            await displayMessage(message, messageKey);
-            messagesCache.set(messageKey, message);
+            messagesContainer.innerHTML = '';
+            
+            for (const message of messages) {
+                await displayMessage(message, message.key);
+                messagesCache.set(message.key, message);
+            }
+            
             scrollToBottom();
-        });
+            
+            if (currentMessagesListener) {
+                messagesRef.child(channelId).off('child_added', currentMessagesListener);
+            }
+            
+            currentMessagesListener = messagesRef.child(channelId).orderByChild('timestamp').startAt(Date.now()).on('child_added', async function(snapshot) {
+                const message = snapshot.val();
+                const messageKey = snapshot.key;
+                
+                if (messagesCache.has(messageKey)) return;
+                
+                const canView = await checkChannelPermissions(message.channelId, currentUser.id, 'view');
+                if (!canView) return;
+                
+                await displayMessage(message, messageKey);
+                messagesCache.set(messageKey, message);
+                scrollToBottom();
+            });
+        } catch (error) {
+            console.error('Error loading messages:', error);
+            messagesContainer.innerHTML = '<div class="loading-text">Error loading messages</div>';
+        }
     }
     
     async function sendMessage(text, type = 'text') {
-        if (!text || !text.trim() || !currentUser || !currentChannel) return;
+        if (!text || !text.trim() || !currentUser || !currentChannelId) return;
         
-        const canSend = await checkChannelPermissions(currentChannel, currentUser.id, 'send');
+        const canSend = await checkChannelPermissions(currentChannelId, currentUser.id, 'send');
         if (!canSend) {
             Swal.fire('Access Denied', 'You do not have permission to send messages in this channel', 'error');
             return;
         }
         
-        const slowmodeOk = await checkSlowmode(currentChannel, currentUser.id);
+        const slowmodeOk = await checkSlowmode(currentChannelId, currentUser.id);
         if (!slowmodeOk) return;
         
         const isMuted = await mutesRef.child(currentUser.id).once('value');
@@ -1373,7 +1321,7 @@
         }
         
         const sendBtn = document.getElementById('sendButton');
-        sendBtn.disabled = true;
+        if (sendBtn) sendBtn.disabled = true;
         
         try {
             const userData = await usersRef.child(currentUser.id).once('value');
@@ -1387,20 +1335,23 @@
                 userId: currentUser.id,
                 timestamp: Date.now(),
                 type: type,
-                channelId: currentChannel
+                channelId: currentChannelId
             };
             
-            await messagesRef.child(currentChannel).push(message);
-            document.getElementById('messageInput').value = '';
+            await messagesRef.child(currentChannelId).push(message);
+            const input = document.getElementById('messageInput');
+            if (input) input.value = '';
         } catch (error) {
             console.error('Send error:', error);
         } finally {
-            sendBtn.disabled = false;
+            if (sendBtn) sendBtn.disabled = false;
         }
     }
     
     async function displayMessage(message, key) {
         const messagesContainer = document.getElementById('chatMessages');
+        if (!messagesContainer) return;
+        
         const messageDiv = document.createElement('div');
         const isOwn = message.userId === currentUser.id;
         messageDiv.className = `message ${isOwn ? 'sent' : 'received'} ${message.type !== 'text' ? 'media-message' : ''}`;
@@ -1491,6 +1442,55 @@
         });
     }
     
+    async function showAvatarUploadDialog() {
+        const { value: choice } = await Swal.fire({
+            title: 'Upload Avatar',
+            input: 'select',
+            inputOptions: {
+                'url': 'Paste URL',
+                'file': 'Upload File'
+            },
+            inputPlaceholder: 'Choose option',
+            showCancelButton: true,
+            confirmButtonText: 'Next',
+            cancelButtonText: 'Cancel'
+        });
+        
+        if (choice === 'url') {
+            const { value: url } = await Swal.fire({
+                title: 'Avatar URL',
+                input: 'url',
+                inputPlaceholder: 'https://example.com/avatar.jpg',
+                showCancelButton: true,
+                confirmButtonText: 'Save'
+            });
+            if (url) {
+                await usersRef.child(currentUser.id).update({ avatar: url });
+                currentUser.avatar = url;
+                Swal.fire('Success', 'Avatar updated', 'success');
+                renderMainApp();
+            }
+        } else if (choice === 'file') {
+            const { value: file } = await Swal.fire({
+                title: 'Select Image',
+                input: 'file',
+                inputAttributes: {
+                    'accept': 'image/*',
+                    'aria-label': 'Choose image'
+                },
+                showCancelButton: true,
+                confirmButtonText: 'Upload'
+            });
+            if (file) {
+                const avatarUrl = await uploadFile(file);
+                await usersRef.child(currentUser.id).update({ avatar: avatarUrl });
+                currentUser.avatar = avatarUrl;
+                Swal.fire('Success', 'Avatar updated', 'success');
+                renderMainApp();
+            }
+        }
+    }
+    
     async function showUserProfile(userId) {
         const userSnapshot = await usersRef.child(userId).once('value');
         const user = userSnapshot.val();
@@ -1541,7 +1541,8 @@
     
     async function loadUsersList() {
         const usersList = document.getElementById('usersList');
-        usersList.innerHTML = '<div style="color:white;">Loading...</div>';
+        if (!usersList) return;
+        usersList.innerHTML = '<div class="loading-text">Loading...</div>';
         
         const snapshot = await usersRef.once('value');
         usersList.innerHTML = '';
@@ -1565,7 +1566,8 @@
     
     async function loadRolesList() {
         const rolesList = document.getElementById('rolesList');
-        rolesList.innerHTML = '<div style="color:white;">Loading...</div>';
+        if (!rolesList) return;
+        rolesList.innerHTML = '<div class="loading-text">Loading...</div>';
         
         const snapshot = await rolesRef.once('value');
         rolesList.innerHTML = '';
@@ -1587,7 +1589,8 @@
     
     async function loadChannelsList() {
         const channelsList = document.getElementById('channelsListAdmin');
-        channelsList.innerHTML = '<div style="color:white;">Loading...</div>';
+        if (!channelsList) return;
+        channelsList.innerHTML = '<div class="loading-text">Loading...</div>';
         
         const snapshot = await channelsRef.once('value');
         channelsList.innerHTML = '';
@@ -1804,24 +1807,34 @@
             await messagesRef.child(channelId).remove();
             Swal.fire('Deleted', 'Channel deleted', 'success');
             loadChannelsList();
-            loadChannelsSidebar();
             
             const snapshot = await channelsRef.once('value');
-            if (snapshot.numChildren() > 0) {
-                snapshot.forEach(child => {
-                    if (!currentChannel || currentChannel === channelId) {
-                        switchChannel(child.key);
-                    }
-                });
+            let newChannelId = null;
+            snapshot.forEach(child => {
+                if (!newChannelId) {
+                    newChannelId = child.key;
+                }
+            });
+            
+            if (newChannelId) {
+                await switchChannel(newChannelId);
+            } else {
+                currentChannelId = null;
+                await loadChannelsSidebar();
+                const messagesContainer = document.getElementById('chatMessages');
+                if (messagesContainer) {
+                    messagesContainer.innerHTML = '<div class="loading-text">No channels available</div>';
+                }
             }
         }
     }
     
     function logout() {
-        if (currentMessagesListener && currentChannel) {
-            messagesRef.child(currentChannel).off('child_added', currentMessagesListener);
+        if (currentMessagesListener && currentChannelId) {
+            messagesRef.child(currentChannelId).off('child_added', currentMessagesListener);
         }
         currentUser = null;
+        currentChannelId = null;
         localStorage.removeItem('chatUser');
         renderAuthScreen();
     }
@@ -1899,10 +1912,6 @@
         
         loadChannelsSidebar();
         loadMembers();
-        
-        if (currentChannel) {
-            loadMessagesForChannel(currentChannel);
-        }
         
         const messageInput = document.getElementById('messageInput');
         if (messageInput) {
@@ -2014,19 +2023,6 @@
                     localStorage.setItem('chatUser', JSON.stringify(currentUser));
                     isAdmin = currentUser.username === ADMIN_USERNAME;
                     
-                    const snapshot = await channelsRef.once('value');
-                    if (snapshot.numChildren() > 0) {
-                        for (const child of Object.values(snapshot.val() || {})) {
-                            if (!currentChannel) {
-                                const canView = await checkChannelPermissions(child.key, currentUser.id, 'view');
-                                if (canView) {
-                                    currentChannel = child.key;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    
                     renderMainApp();
                 } else {
                     errorElement.textContent = 'Invalid password';
@@ -2060,19 +2056,6 @@
                 };
                 localStorage.setItem('chatUser', JSON.stringify(currentUser));
                 isAdmin = currentUser.username === ADMIN_USERNAME;
-                
-                const snapshot = await channelsRef.once('value');
-                if (snapshot.numChildren() > 0) {
-                    for (const child of Object.values(snapshot.val() || {})) {
-                        if (!currentChannel) {
-                            const canView = await checkChannelPermissions(child.key, currentUser.id, 'view');
-                            if (canView) {
-                                currentChannel = child.key;
-                                break;
-                            }
-                        }
-                    }
-                }
                 
                 renderMainApp();
             }
@@ -2147,20 +2130,6 @@
                     }
                     
                     isAdmin = currentUser.username === ADMIN_USERNAME;
-                    
-                    const snapshot = await channelsRef.once('value');
-                    if (snapshot.numChildren() > 0) {
-                        for (const [key, value] of Object.entries(snapshot.val() || {})) {
-                            if (!currentChannel) {
-                                const canView = await checkChannelPermissions(key, currentUser.id, 'view');
-                                if (canView) {
-                                    currentChannel = key;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    
                     renderMainApp();
                     return;
                 }
