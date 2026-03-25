@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>General Chat - Advanced</title>
+    <title>General Chat</title>
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -22,7 +22,6 @@
             overflow: hidden;
         }
 
-        /* Основной контейнер */
         .app-container {
             display: flex;
             height: 100vh;
@@ -30,7 +29,6 @@
             background: black;
         }
 
-        /* Левая панель - каналы */
         .channels-sidebar {
             width: 280px;
             background: #0a0a0a;
@@ -87,7 +85,6 @@
             background: #3a3a3a;
         }
 
-        /* Центральная панель - чат */
         .main-container {
             flex: 1;
             display: flex;
@@ -181,7 +178,6 @@
             font-weight: bold;
         }
 
-        /* Нижняя панель */
         .bottom-panel {
             padding: 15px 20px;
             background: black;
@@ -239,7 +235,7 @@
             border-radius: 25px;
             cursor: pointer;
             color: white;
-            font-size: 1.2rem;
+            font-size: 0.9rem;
         }
 
         .media-btn:hover {
@@ -260,7 +256,6 @@
             background: #3a3a3a;
         }
 
-        /* Правая панель - участники */
         .members-sidebar {
             width: 280px;
             background: #0a0a0a;
@@ -302,6 +297,7 @@
             align-items: center;
             justify-content: center;
             font-size: 1rem;
+            color: white;
         }
 
         .member-name {
@@ -324,7 +320,6 @@
             border-top: 1px solid #2a2a2a;
         }
 
-        /* Admin Panel Modal */
         .modal {
             display: none;
             position: fixed;
@@ -501,6 +496,27 @@
             color: white;
             font-size: 0.8rem;
         }
+
+        .swal2-popup {
+            background: #0a0a0a !important;
+            border: 1px solid #2a2a2a !important;
+        }
+        
+        .swal2-title, .swal2-html-container {
+            color: white !important;
+        }
+        
+        .swal2-input, .swal2-select {
+            background: #1a1a1a !important;
+            border: 1px solid #2a2a2a !important;
+            color: white !important;
+        }
+        
+        .swal2-confirm, .swal2-cancel {
+            background: #2b2b2b !important;
+            border: 1px solid #3a3a3a !important;
+            color: white !important;
+        }
     </style>
 </head>
 <body>
@@ -508,6 +524,7 @@
 
 <script>
     const ADMIN_USERNAME = "SStwendRT";
+    let messageListenerAttached = false;
     
     const firebaseConfig = {
         apiKey: "AIzaSyB9XzL1XzL1XzL1XzL1XzL1XzL1XzL1",
@@ -532,13 +549,12 @@
     let currentUser = null;
     let currentChannel = null;
     let isAdmin = false;
-    let onlineUsers = new Set();
     
     async function loadMembers() {
         const membersList = document.getElementById('membersList');
         if (!membersList) return;
         
-        membersList.innerHTML = '<div style="color:#888;">Загрузка...</div>';
+        membersList.innerHTML = '<div style="color:#888;">Loading...</div>';
         
         const snapshot = await usersRef.once('value');
         membersList.innerHTML = '';
@@ -584,7 +600,7 @@
         if (!snapshot.exists()) {
             const defaultChannel = await channelsRef.push({
                 name: 'general',
-                displayName: 'Общий чат',
+                displayName: 'General',
                 createdBy: 'system',
                 createdAt: Date.now()
             });
@@ -601,7 +617,7 @@
         });
         
         if (!currentChannel && snapshot.numChildren() > 0) {
-            const firstChannel = snapshot.forEach(child => {
+            snapshot.forEach(child => {
                 if (!currentChannel) currentChannel = child.key;
             });
         }
@@ -620,45 +636,47 @@
     }
     
     function switchChannel(channelId) {
+        if (currentChannel === channelId) return;
         currentChannel = channelId;
         loadChannelsSidebar();
         document.getElementById('chatMessages').innerHTML = '';
+        
+        if (messageListenerAttached) {
+            messagesRef.child(currentChannel).off();
+        }
         listenForMessages();
         updateChannelName();
     }
     
     async function sendMessageWithMedia(type) {
-        if (type === 'image') {
-            const { value: url } = await Swal.fire({
-                title: 'Вставьте ссылку на изображение',
-                input: 'url',
-                inputPlaceholder: 'https://...',
-                showCancelButton: true
-            });
-            if (url) {
-                sendMessage(url, 'image');
+        const { value: url } = await Swal.fire({
+            title: type === 'image' ? 'Insert image URL' : 'Insert GIF URL',
+            input: 'url',
+            inputPlaceholder: 'https://example.com/image.jpg',
+            showCancelButton: true,
+            confirmButtonText: 'Send',
+            cancelButtonText: 'Cancel',
+            background: '#0a0a0a',
+            color: 'white',
+            customClass: {
+                popup: 'swal2-popup',
+                input: 'swal2-input'
             }
-        } else if (type === 'gif') {
-            const { value: url } = await Swal.fire({
-                title: 'Вставьте ссылку на GIF',
-                input: 'url',
-                inputPlaceholder: 'https://...',
-                showCancelButton: true
-            });
-            if (url) {
-                sendMessage(url, 'gif');
-            }
+        });
+        
+        if (url) {
+            sendMessage(url, type);
         }
     }
     
     async function sendMessage(text, type = 'text') {
-        if (!text || !currentUser || !currentChannel) return;
+        if (!text || !text.trim() || !currentUser || !currentChannel) return;
         
         const isMuted = await mutesRef.child(currentUser.id).once('value');
         if (isMuted.exists()) {
             const muteData = isMuted.val();
             if (muteData.expiresAt > Date.now()) {
-                Swal.fire('Ошибка', 'Вы замьючены и не можете писать', 'error');
+                Swal.fire('Error', 'You are muted and cannot send messages', 'error');
                 return;
             } else {
                 await mutesRef.child(currentUser.id).remove();
@@ -670,7 +688,7 @@
         
         try {
             const message = {
-                text: text,
+                text: text.trim(),
                 username: currentUser.username,
                 userId: currentUser.id,
                 timestamp: Date.now(),
@@ -691,7 +709,9 @@
     function listenForMessages() {
         if (!currentChannel) return;
         
+        messageListenerAttached = true;
         const channelMessagesRef = messagesRef.child(currentChannel);
+        
         channelMessagesRef.orderByChild('timestamp').limitToLast(50).on('child_added', async function(snapshot) {
             const message = snapshot.val();
             const messageKey = snapshot.key;
@@ -711,7 +731,7 @@
         messageDiv.className = `message ${isOwn ? 'sent' : 'received'} ${message.type !== 'text' ? 'media-message' : ''}`;
         messageDiv.setAttribute('data-key', key);
         
-        let timeStr = 'только что';
+        let timeStr = 'just now';
         if (message.timestamp) {
             const date = new Date(message.timestamp);
             timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -761,7 +781,7 @@
     
     function showAdminPanel() {
         if (!isAdmin) {
-            Swal.fire('Ошибка', 'У вас нет прав администратора', 'error');
+            Swal.fire('Error', 'You do not have admin permissions', 'error');
             return;
         }
         document.getElementById('adminModal').style.display = 'block';
@@ -776,7 +796,7 @@
     
     async function loadUsersList() {
         const usersList = document.getElementById('usersList');
-        usersList.innerHTML = '<div style="color:white;">Загрузка...</div>';
+        usersList.innerHTML = '<div style="color:white;">Loading...</div>';
         
         const snapshot = await usersRef.once('value');
         usersList.innerHTML = '';
@@ -788,9 +808,9 @@
             userDiv.innerHTML = `
                 <span>${escapeHtml(user.username)} ${user.username === ADMIN_USERNAME ? '👑' : ''}</span>
                 <div>
-                    <button class="ban-btn" onclick="banUser('${child.key}', '${escapeHtml(user.username)}')">Забанить</button>
-                    <button class="mute-btn" onclick="muteUser('${child.key}', '${escapeHtml(user.username)}')">Мут</button>
-                    <button class="edit-btn" onclick="assignRole('${child.key}', '${escapeHtml(user.username)}')">Роль</button>
+                    <button class="ban-btn" onclick="banUser('${child.key}', '${escapeHtml(user.username)}')">Ban</button>
+                    <button class="mute-btn" onclick="muteUser('${child.key}', '${escapeHtml(user.username)}')">Mute</button>
+                    <button class="edit-btn" onclick="assignRole('${child.key}', '${escapeHtml(user.username)}')">Role</button>
                 </div>
             `;
             usersList.appendChild(userDiv);
@@ -799,7 +819,7 @@
     
     async function loadRolesList() {
         const rolesList = document.getElementById('rolesList');
-        rolesList.innerHTML = '<div style="color:white;">Загрузка...</div>';
+        rolesList.innerHTML = '<div style="color:white;">Loading...</div>';
         
         const snapshot = await rolesRef.once('value');
         rolesList.innerHTML = '';
@@ -811,8 +831,8 @@
             roleDiv.innerHTML = `
                 <span style="color: ${role.color};">${escapeHtml(role.name)}</span>
                 <div>
-                    <button class="edit-btn" onclick="editRole('${child.key}', '${escapeHtml(role.name)}', '${role.color}')">✏️</button>
-                    <button class="delete-btn" onclick="deleteRole('${child.key}')">🗑️</button>
+                    <button class="edit-btn" onclick="editRole('${child.key}', '${escapeHtml(role.name)}', '${role.color}')">Edit</button>
+                    <button class="delete-btn" onclick="deleteRole('${child.key}')">Delete</button>
                 </div>
             `;
             rolesList.appendChild(roleDiv);
@@ -821,7 +841,7 @@
     
     async function loadChannelsList() {
         const channelsList = document.getElementById('channelsListAdmin');
-        channelsList.innerHTML = '<div style="color:white;">Загрузка...</div>';
+        channelsList.innerHTML = '<div style="color:white;">Loading...</div>';
         
         const snapshot = await channelsRef.once('value');
         channelsList.innerHTML = '';
@@ -833,8 +853,8 @@
             channelDiv.innerHTML = `
                 <span># ${escapeHtml(channel.displayName || channel.name)}</span>
                 <div>
-                    <button class="edit-btn" onclick="editChannel('${child.key}', '${escapeHtml(channel.displayName || channel.name)}')">✏️</button>
-                    <button class="delete-btn" onclick="deleteChannel('${child.key}')">🗑️</button>
+                    <button class="edit-btn" onclick="editChannel('${child.key}', '${escapeHtml(channel.displayName || channel.name)}')">Edit</button>
+                    <button class="delete-btn" onclick="deleteChannel('${child.key}')">Delete</button>
                 </div>
             `;
             channelsList.appendChild(channelDiv);
@@ -843,15 +863,18 @@
     
     async function banUser(userId, username) {
         const { value: duration } = await Swal.fire({
-            title: `Забанить ${username}`,
+            title: `Ban ${username}`,
             input: 'select',
             inputOptions: {
-                'permanent': 'Навсегда',
-                '3600000': '1 час',
-                '86400000': '1 день',
-                '604800000': '1 неделя'
+                'permanent': 'Permanent',
+                '3600000': '1 hour',
+                '86400000': '1 day',
+                '604800000': '1 week'
             },
-            showCancelButton: true
+            inputPlaceholder: 'Select ban duration',
+            showCancelButton: true,
+            confirmButtonText: 'Ban',
+            cancelButtonText: 'Cancel'
         });
         
         if (duration) {
@@ -863,20 +886,23 @@
                 expiresAt: duration === 'permanent' ? null : Date.now() + parseInt(duration)
             };
             await bansRef.child(userId).set(banData);
-            Swal.fire('Успех', `${username} забанен`, 'success');
+            Swal.fire('Success', `${username} has been banned`, 'success');
         }
     }
     
     async function muteUser(userId, username) {
         const { value: duration } = await Swal.fire({
-            title: `Замутить ${username}`,
+            title: `Mute ${username}`,
             input: 'select',
             inputOptions: {
-                '600000': '10 минут',
-                '3600000': '1 час',
-                '86400000': '1 день'
+                '600000': '10 minutes',
+                '3600000': '1 hour',
+                '86400000': '1 day'
             },
-            showCancelButton: true
+            inputPlaceholder: 'Select mute duration',
+            showCancelButton: true,
+            confirmButtonText: 'Mute',
+            cancelButtonText: 'Cancel'
         });
         
         if (duration) {
@@ -888,7 +914,7 @@
                 expiresAt: Date.now() + parseInt(duration)
             };
             await mutesRef.child(userId).set(muteData);
-            Swal.fire('Успех', `${username} замучен`, 'success');
+            Swal.fire('Success', `${username} has been muted`, 'success');
         }
     }
     
@@ -900,36 +926,40 @@
         });
         
         if (roles.length === 0) {
-            Swal.fire('Ошибка', 'Сначала создайте роли', 'error');
+            Swal.fire('Error', 'Create roles first', 'error');
             return;
         }
         
         const { value: roleId } = await Swal.fire({
-            title: `Выдать роль для ${username}`,
+            title: `Assign role to ${username}`,
             input: 'select',
             inputOptions: Object.fromEntries(roles.map(r => [r.id, r.name])),
-            showCancelButton: true
+            showCancelButton: true,
+            confirmButtonText: 'Assign',
+            cancelButtonText: 'Cancel'
         });
         
         if (roleId) {
             await userRolesRef.child(userId).set(roleId);
-            Swal.fire('Успех', `Роль выдана`, 'success');
+            Swal.fire('Success', `Role assigned to ${username}`, 'success');
         }
     }
     
     function createRole() {
         Swal.fire({
-            title: 'Создать роль',
+            title: 'Create Role',
             html: `
-                <input id="roleName" class="swal2-input" placeholder="Название роли">
+                <input id="roleName" class="swal2-input" placeholder="Role name">
                 <input id="roleColor" class="swal2-input" type="color" value="#667eea">
             `,
             showCancelButton: true,
+            confirmButtonText: 'Create',
+            cancelButtonText: 'Cancel',
             preConfirm: () => {
                 const name = document.getElementById('roleName').value;
                 const color = document.getElementById('roleColor').value;
                 if (!name) {
-                    Swal.showValidationMessage('Введите название роли');
+                    Swal.showValidationMessage('Enter role name');
                 }
                 return { name, color };
             }
@@ -941,7 +971,7 @@
                     createdBy: currentUser.username,
                     createdAt: Date.now()
                 });
-                Swal.fire('Успех', 'Роль создана', 'success');
+                Swal.fire('Success', 'Role created', 'success');
                 loadRolesList();
             }
         });
@@ -949,12 +979,14 @@
     
     async function editRole(roleId, oldName, oldColor) {
         const { value: formValues } = await Swal.fire({
-            title: 'Редактировать роль',
+            title: 'Edit Role',
             html: `
                 <input id="roleName" class="swal2-input" value="${oldName}">
                 <input id="roleColor" class="swal2-input" type="color" value="${oldColor}">
             `,
             showCancelButton: true,
+            confirmButtonText: 'Save',
+            cancelButtonText: 'Cancel',
             preConfirm: () => {
                 const name = document.getElementById('roleName').value;
                 const color = document.getElementById('roleColor').value;
@@ -967,32 +999,36 @@
                 name: formValues.name,
                 color: formValues.color
             });
-            Swal.fire('Успех', 'Роль обновлена', 'success');
+            Swal.fire('Success', 'Role updated', 'success');
             loadRolesList();
         }
     }
     
     async function deleteRole(roleId) {
         const result = await Swal.fire({
-            title: 'Удалить роль?',
-            text: 'Это действие нельзя отменить',
+            title: 'Delete Role?',
+            text: 'This action cannot be undone',
             icon: 'warning',
-            showCancelButton: true
+            showCancelButton: true,
+            confirmButtonText: 'Delete',
+            cancelButtonText: 'Cancel'
         });
         
         if (result.isConfirmed) {
             await rolesRef.child(roleId).remove();
-            Swal.fire('Удалено', 'Роль удалена', 'success');
+            Swal.fire('Deleted', 'Role deleted', 'success');
             loadRolesList();
         }
     }
     
     function createChannel() {
         Swal.fire({
-            title: 'Создать канал',
+            title: 'Create Channel',
             input: 'text',
-            inputPlaceholder: 'Название канала',
-            showCancelButton: true
+            inputPlaceholder: 'Channel name',
+            showCancelButton: true,
+            confirmButtonText: 'Create',
+            cancelButtonText: 'Cancel'
         }).then(async (result) => {
             if (result.value) {
                 const channelName = result.value.toLowerCase().replace(/\s/g, '-');
@@ -1002,7 +1038,7 @@
                     createdBy: currentUser.username,
                     createdAt: Date.now()
                 });
-                Swal.fire('Успех', `Канал #${result.value} создан`, 'success');
+                Swal.fire('Success', `Channel #${result.value} created`, 'success');
                 loadChannelsList();
                 loadChannelsSidebar();
             }
@@ -1011,10 +1047,12 @@
     
     async function editChannel(channelId, oldName) {
         const { value: newName } = await Swal.fire({
-            title: 'Редактировать канал',
+            title: 'Edit Channel',
             input: 'text',
             inputValue: oldName,
-            showCancelButton: true
+            showCancelButton: true,
+            confirmButtonText: 'Save',
+            cancelButtonText: 'Cancel'
         });
         
         if (newName) {
@@ -1022,7 +1060,7 @@
                 name: newName.toLowerCase().replace(/\s/g, '-'),
                 displayName: newName
             });
-            Swal.fire('Успех', 'Канал обновлен', 'success');
+            Swal.fire('Success', 'Channel updated', 'success');
             loadChannelsList();
             loadChannelsSidebar();
             updateChannelName();
@@ -1031,16 +1069,18 @@
     
     async function deleteChannel(channelId) {
         const result = await Swal.fire({
-            title: 'Удалить канал?',
-            text: 'Все сообщения в канале будут удалены',
+            title: 'Delete Channel?',
+            text: 'All messages in this channel will be deleted',
             icon: 'warning',
-            showCancelButton: true
+            showCancelButton: true,
+            confirmButtonText: 'Delete',
+            cancelButtonText: 'Cancel'
         });
         
         if (result.isConfirmed) {
             await channelsRef.child(channelId).remove();
             await messagesRef.child(channelId).remove();
-            Swal.fire('Удалено', 'Канал удален', 'success');
+            Swal.fire('Deleted', 'Channel deleted', 'success');
             loadChannelsList();
             loadChannelsSidebar();
             
@@ -1056,6 +1096,10 @@
     }
     
     function logout() {
+        if (messageListenerAttached && currentChannel) {
+            messagesRef.child(currentChannel).off();
+            messageListenerAttached = false;
+        }
         currentUser = null;
         localStorage.removeItem('chatUser');
         renderAuthScreen();
@@ -1066,35 +1110,35 @@
         appDiv.innerHTML = `
             <div class="app-container">
                 <div class="channels-sidebar">
-                    <div class="channels-header">📢 Каналы</div>
+                    <div class="channels-header">Channels</div>
                     <div class="channels-list" id="channelsList"></div>
-                    ${isAdmin ? '<div class="add-channel-btn" onclick="createChannel()">+ Создать канал</div>' : ''}
+                    ${isAdmin ? '<div class="add-channel-btn" onclick="createChannel()">+ Create Channel</div>' : ''}
                 </div>
                 
                 <div class="main-container">
                     <div class="chat-header">
                         <div class="channel-info">
-                            <h2 id="channelName"># Загрузка...</h2>
-                            <p>Общий чат</p>
+                            <h2 id="channelName"># Loading...</h2>
+                            <p>Text channel</p>
                         </div>
-                        <button class="logout-btn" onclick="logout()">🚪 Выйти</button>
+                        <button class="logout-btn" onclick="logout()">Logout</button>
                     </div>
                     <div class="chat-messages" id="chatMessages"></div>
                     <div class="bottom-panel">
-                        ${isAdmin ? '<button class="admin-btn" onclick="showAdminPanel()">⚙️ Админ панель</button>' : ''}
+                        ${isAdmin ? '<button class="admin-btn" onclick="showAdminPanel()">Admin Panel</button>' : ''}
                         <div class="message-input-wrapper">
-                            <input type="text" id="messageInput" placeholder="Введите сообщение...">
+                            <input type="text" id="messageInput" placeholder="Type a message...">
                             <div class="media-buttons">
-                                <button class="media-btn" onclick="sendMessageWithMedia(\'image\')">🖼️</button>
-                                <button class="media-btn" onclick="sendMessageWithMedia(\'gif\')">🎬</button>
+                                <button class="media-btn" onclick="sendMessageWithMedia(\'image\')">Image</button>
+                                <button class="media-btn" onclick="sendMessageWithMedia(\'gif\')">GIF</button>
                             </div>
-                            <button id="sendButton" onclick="sendMessage(document.getElementById(\'messageInput\').value)">📤 Отправить</button>
+                            <button id="sendButton" onclick="sendMessage(document.getElementById(\'messageInput\').value)">Send</button>
                         </div>
                     </div>
                 </div>
                 
                 <div class="members-sidebar">
-                    <div class="members-header">👥 Участники</div>
+                    <div class="members-header">Members</div>
                     <div class="members-list" id="membersList"></div>
                     <div class="status-text">Status: Work</div>
                 </div>
@@ -1103,19 +1147,19 @@
             <div id="adminModal" class="modal">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h2>Админ панель</h2>
+                        <h2>Admin Panel</h2>
                         <button class="close-modal" onclick="document.getElementById('adminModal').style.display='none'">×</button>
                     </div>
                     <div class="admin-tabs">
-                        <div class="admin-tab active" onclick="switchAdminTab('users')">Пользователи</div>
-                        <div class="admin-tab" onclick="switchAdminTab('roles')">Роли</div>
-                        <div class="admin-tab" onclick="switchAdminTab('channels')">Каналы</div>
+                        <div class="admin-tab active" onclick="switchAdminTab('users')">Users</div>
+                        <div class="admin-tab" onclick="switchAdminTab('roles')">Roles</div>
+                        <div class="admin-tab" onclick="switchAdminTab('channels')">Channels</div>
                     </div>
                     <div id="usersPanel" class="admin-panel active">
                         <div class="user-list" id="usersList"></div>
                     </div>
                     <div id="rolesPanel" class="admin-panel">
-                        <button class="add-channel-btn" onclick="createRole()">+ Создать роль</button>
+                        <button class="add-channel-btn" onclick="createRole()">+ Create Role</button>
                         <div class="role-list" id="rolesList"></div>
                     </div>
                     <div id="channelsPanel" class="admin-panel">
@@ -1133,6 +1177,7 @@
         if (messageInput) {
             messageInput.onkeypress = (e) => {
                 if (e.key === 'Enter') {
+                    e.preventDefault();
                     sendMessage(messageInput.value);
                 }
             };
@@ -1144,12 +1189,12 @@
         appDiv.innerHTML = `
             <div class="auth-overlay">
                 <div class="auth-container">
-                    <div class="auth-title" id="authTitle">Регистрация</div>
-                    <input type="text" id="username" class="auth-input" placeholder="Никнейм">
-                    <input type="password" id="password" class="auth-input" placeholder="Пароль">
+                    <div class="auth-title" id="authTitle">Register</div>
+                    <input type="text" id="username" class="auth-input" placeholder="Username">
+                    <input type="password" id="password" class="auth-input" placeholder="Password">
                     <div id="errorMessage" class="error-message"></div>
-                    <button class="auth-button" id="submitButton">Зарегистрироваться</button>
-                    <div class="auth-switch" id="authSwitch">Уже есть аккаунт? Войти</div>
+                    <button class="auth-button" id="submitButton">Register</button>
+                    <div class="auth-switch" id="authSwitch">Already have an account? Login</div>
                 </div>
             </div>
         `;
@@ -1164,13 +1209,13 @@
             const switchBtn = document.getElementById('authSwitch');
             
             if (isLoginMode) {
-                title.textContent = 'Вход';
-                submitBtn.textContent = 'Войти';
-                switchBtn.textContent = 'Нет аккаунта? Зарегистрироваться';
+                title.textContent = 'Login';
+                submitBtn.textContent = 'Login';
+                switchBtn.textContent = "Don't have an account? Register";
             } else {
-                title.textContent = 'Регистрация';
-                submitBtn.textContent = 'Зарегистрироваться';
-                switchBtn.textContent = 'Уже есть аккаунт? Войти';
+                title.textContent = 'Register';
+                submitBtn.textContent = 'Register';
+                switchBtn.textContent = 'Already have an account? Login';
             }
             document.getElementById('errorMessage').textContent = '';
         };
@@ -1183,17 +1228,17 @@
         const submitButton = document.getElementById('submitButton');
         
         if (!username || !password) {
-            errorElement.textContent = 'Заполните все поля';
+            errorElement.textContent = 'Fill in all fields';
             return;
         }
         
         if (username.length < 3) {
-            errorElement.textContent = 'Никнейм должен содержать минимум 3 символа';
+            errorElement.textContent = 'Username must be at least 3 characters';
             return;
         }
         
         submitButton.disabled = true;
-        submitButton.textContent = 'Проверка...';
+        submitButton.textContent = 'Checking...';
         errorElement.textContent = '';
         
         try {
@@ -1201,9 +1246,9 @@
                 const userSnapshot = await usersRef.orderByChild('username').equalTo(username).once('value');
                 
                 if (!userSnapshot.exists()) {
-                    errorElement.textContent = 'Пользователь не найден';
+                    errorElement.textContent = 'User not found';
                     submitButton.disabled = false;
-                    submitButton.textContent = 'Войти';
+                    submitButton.textContent = 'Login';
                     return;
                 }
                 
@@ -1224,9 +1269,9 @@
                     if (isBanned.exists()) {
                         const banData = isBanned.val();
                         if (!banData.expiresAt || banData.expiresAt > Date.now()) {
-                            errorElement.textContent = 'Вы забанены на этом сервере';
+                            errorElement.textContent = 'You are banned from this server';
                             submitButton.disabled = false;
-                            submitButton.textContent = 'Войти';
+                            submitButton.textContent = 'Login';
                             return;
                         } else {
                             await bansRef.child(currentUser.id).remove();
@@ -1237,17 +1282,17 @@
                     isAdmin = currentUser.username === ADMIN_USERNAME;
                     renderMainApp();
                 } else {
-                    errorElement.textContent = 'Неверный пароль';
+                    errorElement.textContent = 'Invalid password';
                     submitButton.disabled = false;
-                    submitButton.textContent = 'Войти';
+                    submitButton.textContent = 'Login';
                 }
             } else {
                 const existingUser = await usersRef.orderByChild('username').equalTo(username).once('value');
                 
                 if (existingUser.exists()) {
-                    errorElement.textContent = 'Этот никнейм уже занят';
+                    errorElement.textContent = 'Username already taken';
                     submitButton.disabled = false;
-                    submitButton.textContent = 'Зарегистрироваться';
+                    submitButton.textContent = 'Register';
                     return;
                 }
                 
@@ -1267,9 +1312,9 @@
                 renderMainApp();
             }
         } catch (error) {
-            errorElement.textContent = 'Ошибка: ' + (error.message || 'Неизвестная ошибка');
+            errorElement.textContent = 'Error: ' + (error.message || 'Unknown error');
             submitButton.disabled = false;
-            submitButton.textContent = isLoginMode ? 'Войти' : 'Зарегистрироваться';
+            submitButton.textContent = isLoginMode ? 'Login' : 'Register';
         }
     }
     
