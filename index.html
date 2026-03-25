@@ -459,6 +459,11 @@
         submitButton.textContent = 'Зарегистрироваться';
         submitButton.disabled = false;
         document.querySelector('.auth-switch').textContent = 'Уже есть аккаунт? Войти';
+        
+        const messagesContainer = document.getElementById('chatMessages');
+        if (messagesContainer) {
+            messagesContainer.innerHTML = '';
+        }
     }
     
     async function sendMessage() {
@@ -491,7 +496,7 @@
     }
     
     function listenForMessages() {
-        messagesRef.orderByChild('timestamp').limitToLast(50).on('child_added', (snapshot) => {
+        messagesRef.orderByChild('timestamp').limitToLast(50).on('child_added', function(snapshot) {
             const message = snapshot.val();
             const messageKey = snapshot.key;
             
@@ -500,11 +505,6 @@
             
             displayMessage(message, messageKey);
             scrollToBottom();
-        });
-        
-        messagesRef.on('error', (error) => {
-            console.error('Listen error:', error);
-            document.getElementById('statusText').textContent = 'Status: Error - Ошибка чтения чата';
         });
     }
     
