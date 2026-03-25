@@ -397,6 +397,7 @@
                         id: userId,
                         username: userData.username
                     };
+                    saveSession();
                     loginSuccess();
                 } else {
                     errorElement.textContent = 'Неверный пароль';
@@ -425,6 +426,7 @@
                     username: username
                 };
                 
+                saveSession();
                 loginSuccess();
             }
         } catch (error) {
@@ -439,6 +441,37 @@
         }
     }
     
+    function saveSession() {
+        if (currentUser) {
+            localStorage.setItem('chatUser', JSON.stringify({
+                id: currentUser.id,
+                username: currentUser.username
+            }));
+        }
+    }
+    
+    function loadSession() {
+        const savedUser = localStorage.getItem('chatUser');
+        if (savedUser) {
+            try {
+                const userData = JSON.parse(savedUser);
+                currentUser = {
+                    id: userData.id,
+                    username: userData.username
+                };
+                return true;
+            } catch (error) {
+                console.error('Error loading session:', error);
+                localStorage.removeItem('chatUser');
+            }
+        }
+        return false;
+    }
+    
+    function clearSession() {
+        localStorage.removeItem('chatUser');
+    }
+    
     function loginSuccess() {
         document.getElementById('authOverlay').style.display = 'none';
         document.getElementById('chatContainer').style.display = 'flex';
@@ -448,6 +481,7 @@
     
     function logout() {
         currentUser = null;
+        clearSession();
         document.getElementById('authOverlay').style.display = 'flex';
         document.getElementById('chatContainer').style.display = 'none';
         document.getElementById('username').value = '';
@@ -578,6 +612,28 @@
         
         document.getElementById('statusText').textContent = 'Status: Work';
     }
+    
+    async function checkAutoLogin() {
+        if (loadSession() && currentUser) {
+            try {
+                const userCheck = await usersRef.child(currentUser.id).once('value');
+                if (userCheck.exists()) {
+                    const userData = userCheck.val();
+                    currentUser.username = userData.username;
+                    loginSuccess();
+                } else {
+                    clearSession();
+                    currentUser = null;
+                }
+            } catch (error) {
+                console.error('Auto login error:', error);
+                clearSession();
+                currentUser = null;
+            }
+        }
+    }
+    
+    checkAutoLogin();
 </script>
 </body>
 </html>
