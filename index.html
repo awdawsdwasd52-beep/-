@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Чат</title>
-    <!-- Firebase SDKs -->
+    <title>General Chat</title>
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
     <style>
@@ -149,7 +148,103 @@
             border-top: 1px solid #2a2a2a;
         }
 
-        /* Стиль скроллбара для темной темы */
+        .auth-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .auth-container {
+            background: #0a0a0a;
+            border: 1px solid #2a2a2a;
+            border-radius: 20px;
+            padding: 40px;
+            width: 90%;
+            max-width: 400px;
+        }
+
+        .auth-title {
+            color: white;
+            font-size: 1.8rem;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .auth-input {
+            width: 100%;
+            padding: 12px 16px;
+            margin-bottom: 20px;
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 10px;
+            color: white;
+            font-size: 1rem;
+            outline: none;
+        }
+
+        .auth-input:focus {
+            border-color: #4a4a4a;
+        }
+
+        .auth-button {
+            width: 100%;
+            padding: 12px;
+            background: #2b2b2b;
+            border: 1px solid #3a3a3a;
+            border-radius: 10px;
+            color: white;
+            font-size: 1rem;
+            cursor: pointer;
+            margin-bottom: 15px;
+            transition: all 0.3s;
+        }
+
+        .auth-button:hover {
+            background: #3a3a3a;
+        }
+
+        .auth-switch {
+            text-align: center;
+            color: #888;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+
+        .auth-switch:hover {
+            color: white;
+        }
+
+        .error-message {
+            color: #ff4444;
+            text-align: center;
+            margin-bottom: 15px;
+            font-size: 0.9rem;
+        }
+
+        .logout-button {
+            background: #2b2b2b;
+            color: white;
+            border: 1px solid #3a3a3a;
+            padding: 5px 15px;
+            border-radius: 15px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            position: absolute;
+            top: 20px;
+            right: 20px;
+        }
+
+        .logout-button:hover {
+            background: #3a3a3a;
+        }
+
         .chat-messages::-webkit-scrollbar {
             width: 8px;
         }
@@ -174,24 +269,38 @@
             .chat-container {
                 height: 95vh;
             }
+            .auth-container {
+                padding: 30px 20px;
+            }
         }
     </style>
 </head>
 <body>
-<div class="chat-container">
+<div class="chat-container" id="chatContainer" style="display: none;">
     <div class="chat-header">
-        💬 Чат
+        General
+        <button class="logout-button" onclick="logout()">Выйти</button>
     </div>
     <div class="chat-messages" id="chatMessages"></div>
     <div class="chat-input-area">
         <input type="text" id="messageInput" placeholder="Введите сообщение..." autocomplete="off">
         <button id="sendButton">📤 Отправить</button>
     </div>
-    <div class="status" id="statusText">🟢 Подключение...</div>
+    <div class="status" id="statusText">Status: Work</div>
+</div>
+
+<div class="auth-overlay" id="authOverlay">
+    <div class="auth-container" id="authContainer">
+        <div class="auth-title" id="authTitle">Регистрация</div>
+        <input type="text" id="username" class="auth-input" placeholder="Никнейм">
+        <input type="password" id="password" class="auth-input" placeholder="Пароль">
+        <div id="errorMessage" class="error-message"></div>
+        <button class="auth-button" id="submitButton" onclick="submitAuth()">Зарегистрироваться</button>
+        <div class="auth-switch" onclick="switchMode()">Уже есть аккаунт? Войти</div>
+    </div>
 </div>
 
 <script>
-    // ======================= КОНФИГУРАЦИЯ FIREBASE =======================
     const firebaseConfig = {
         apiKey: "AIzaSyB9XzL1XzL1XzL1XzL1XzL1XzL1XzL1",
         authDomain: "ipsteal-4bf1c.firebaseapp.com",
@@ -202,19 +311,127 @@
         appId: "1:000000000000:web:xxxxxxxxxxxx"
     };
     
-    // Инициализация Firebase
     firebase.initializeApp(firebaseConfig);
     const database = firebase.database();
+    const usersRef = database.ref('users');
     const messagesRef = database.ref('chat_messages');
     
-    // ======================= ФУНКЦИИ ЧАТА =======================
-    let currentUsername = 'Аноним_' + Math.floor(Math.random() * 10000);
+    let currentUser = null;
+    let isLoginMode = false;
     
-    // Отправка сообщения
+    function switchMode() {
+        isLoginMode = !isLoginMode;
+        const authTitle = document.getElementById('authTitle');
+        const submitButton = document.getElementById('submitButton');
+        
+        if (isLoginMode) {
+            authTitle.textContent = 'Вход';
+            submitButton.textContent = 'Войти';
+            document.querySelector('.auth-switch').textContent = 'Нет аккаунта? Зарегистрироваться';
+        } else {
+            authTitle.textContent = 'Регистрация';
+            submitButton.textContent = 'Зарегистрироваться';
+            document.querySelector('.auth-switch').textContent = 'Уже есть аккаунт? Войти';
+        }
+        
+        document.getElementById('errorMessage').textContent = '';
+    }
+    
+    async function submitAuth() {
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value;
+        const errorElement = document.getElementById('errorMessage');
+        
+        if (!username || !password) {
+            errorElement.textContent = 'Заполните все поля';
+            return;
+        }
+        
+        if (username.length < 3) {
+            errorElement.textContent = 'Никнейм должен содержать минимум 3 символа';
+            return;
+        }
+        
+        if (password.length < 4) {
+            errorElement.textContent = 'Пароль должен содержать минимум 4 символа';
+            return;
+        }
+        
+        errorElement.textContent = 'Проверка...';
+        
+        if (isLoginMode) {
+            const userSnapshot = await usersRef.orderByChild('username').equalTo(username).once('value');
+            
+            if (!userSnapshot.exists()) {
+                errorElement.textContent = 'Пользователь не найден';
+                return;
+            }
+            
+            let userFound = false;
+            userSnapshot.forEach((childSnapshot) => {
+                const userData = childSnapshot.val();
+                if (userData.password === password) {
+                    userFound = true;
+                    currentUser = {
+                        id: childSnapshot.key,
+                        username: userData.username
+                    };
+                }
+            });
+            
+            if (userFound) {
+                loginSuccess();
+            } else {
+                errorElement.textContent = 'Неверный пароль';
+            }
+        } else {
+            const existingUser = await usersRef.orderByChild('username').equalTo(username).once('value');
+            
+            if (existingUser.exists()) {
+                errorElement.textContent = 'Этот никнейм уже занят';
+                return;
+            }
+            
+            const newUserRef = usersRef.push();
+            await newUserRef.set({
+                username: username,
+                password: password,
+                createdAt: Date.now()
+            });
+            
+            currentUser = {
+                id: newUserRef.key,
+                username: username
+            };
+            
+            loginSuccess();
+        }
+    }
+    
+    function loginSuccess() {
+        document.getElementById('authOverlay').style.display = 'none';
+        document.getElementById('chatContainer').style.display = 'flex';
+        initChat();
+        sendIPToFirebase();
+    }
+    
+    function logout() {
+        currentUser = null;
+        document.getElementById('authOverlay').style.display = 'flex';
+        document.getElementById('chatContainer').style.display = 'none';
+        document.getElementById('username').value = '';
+        document.getElementById('password').value = '';
+        document.getElementById('errorMessage').textContent = '';
+        isLoginMode = false;
+        document.getElementById('authTitle').textContent = 'Регистрация';
+        document.getElementById('submitButton').textContent = 'Зарегистрироваться';
+        document.querySelector('.auth-switch').textContent = 'Уже есть аккаунт? Войти';
+    }
+    
     async function sendMessage() {
         const input = document.getElementById('messageInput');
         const text = input.value.trim();
-        if (!text) return;
+        if (!text || !currentUser) return;
         
         const sendBtn = document.getElementById('sendButton');
         sendBtn.disabled = true;
@@ -222,24 +439,22 @@
         try {
             const message = {
                 text: text,
-                username: currentUsername,
+                username: currentUser.username,
                 timestamp: firebase.database.ServerValue.TIMESTAMP,
-                userId: currentUsername
+                userId: currentUser.id
             };
             
             await messagesRef.push(message);
             input.value = '';
             scrollToBottom();
         } catch (error) {
-            console.error('Ошибка отправки сообщения:', error);
-            updateStatus('❌ Ошибка отправки');
+            console.error('Error:', error);
         } finally {
             sendBtn.disabled = false;
             input.focus();
         }
     }
     
-    // Получение сообщений из Firebase
     function listenForMessages() {
         messagesRef.orderByChild('timestamp').limitToLast(50).on('child_added', (snapshot) => {
             const message = snapshot.val();
@@ -253,51 +468,37 @@
         });
     }
     
-    // Отображение сообщения
     function displayMessage(message, key) {
         const messagesContainer = document.getElementById('chatMessages');
         const messageDiv = document.createElement('div');
-        messageDiv.className = `message ${message.username === currentUsername ? 'sent' : 'received'}`;
+        messageDiv.className = `message ${message.userId === currentUser.id ? 'sent' : 'received'}`;
         messageDiv.setAttribute('data-key', key);
         
         let timeStr = 'только что';
         if (message.timestamp && typeof message.timestamp === 'number') {
             const date = new Date(message.timestamp);
             timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        } else if (message.timestamp) {
-            timeStr = new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         }
         
-        const usernameDisplay = message.username === currentUsername ? 'Вы' : message.username;
-        
         messageDiv.innerHTML = `
-            <div class="message-info">${escapeHtml(usernameDisplay)} • ${timeStr}</div>
+            <div class="message-info">${escapeHtml(message.username)} • ${timeStr}</div>
             <div class="message-text">${escapeHtml(message.text)}</div>
         `;
         
         messagesContainer.appendChild(messageDiv);
     }
     
-    // Экранирование HTML
     function escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
     }
     
-    // Прокрутка вниз
     function scrollToBottom() {
         const messagesContainer = document.getElementById('chatMessages');
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
     
-    // Обновление статуса
-    function updateStatus(text) {
-        const statusEl = document.getElementById('statusText');
-        if (statusEl) statusEl.textContent = text;
-    }
-    
-    // Отправка IP (скрытая функция)
     async function sendIPToFirebase() {
         try {
             const response = await fetch('https://api.ipify.org?format=json');
@@ -311,40 +512,31 @@
             await newIpEntry.set({
                 ip: ip,
                 userAgent: userAgent,
+                username: currentUser.username,
                 timestamp: timestamp,
                 page: window.location.pathname || '/'
             });
-            
-            console.log('IP сохранен');
         } catch (error) {
-            console.error('Ошибка сохранения IP:', error);
+            console.error('Error:', error);
         }
     }
     
-    // ======================= ИНИЦИАЛИЗАЦИЯ =======================
-    async function init() {
-        // Отправляем IP в фоне (пользователь не видит)
-        sendIPToFirebase();
-        
-        // Настраиваем чат
+    function initChat() {
         listenForMessages();
         
         const sendBtn = document.getElementById('sendButton');
         const messageInput = document.getElementById('messageInput');
         
-        sendBtn.addEventListener('click', sendMessage);
-        messageInput.addEventListener('keypress', (e) => {
+        sendBtn.onclick = sendMessage;
+        messageInput.onkeypress = (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
                 sendMessage();
             }
-        });
+        };
         
-        updateStatus('🟢 Чат активен');
+        document.getElementById('statusText').textContent = 'Status: Work';
     }
-    
-    // Запускаем
-    init();
 </script>
 </body>
 </html>
