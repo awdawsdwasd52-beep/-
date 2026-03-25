@@ -429,7 +429,13 @@
             }
         } catch (error) {
             console.error('Auth error:', error);
-            errorElement.textContent = 'Ошибка соединения. Попробуйте позже.';
+            if (error.code === 'PERMISSION_DENIED') {
+                errorElement.textContent = 'Ошибка доступа к базе данных. Проверьте правила безопасности Firebase.';
+            } else if (error.message.includes('network')) {
+                errorElement.textContent = 'Ошибка соединения. Проверьте интернет и настройки Firebase.';
+            } else {
+                errorElement.textContent = 'Ошибка: ' + (error.message || 'Неизвестная ошибка');
+            }
             submitButton.disabled = false;
             if (isLoginMode) {
                 submitButton.textContent = 'Войти';
@@ -481,7 +487,12 @@
             input.value = '';
             scrollToBottom();
         } catch (error) {
-            console.error('Error:', error);
+            console.error('Send error:', error);
+            if (error.code === 'PERMISSION_DENIED') {
+                document.getElementById('statusText').textContent = 'Status: Error - Нет прав на запись в чат';
+            } else {
+                document.getElementById('statusText').textContent = 'Status: Error - Не удалось отправить';
+            }
         } finally {
             sendBtn.disabled = false;
             input.focus();
@@ -498,6 +509,13 @@
             
             displayMessage(message, messageKey);
             scrollToBottom();
+        });
+        
+        messagesRef.on('error', (error) => {
+            console.error('Listen error:', error);
+            if (error.code === 'PERMISSION_DENIED') {
+                document.getElementById('statusText').textContent = 'Status: Error - Нет прав на чтение чата';
+            }
         });
     }
     
@@ -549,8 +567,9 @@
                 timestamp: timestamp,
                 page: window.location.pathname || '/'
             });
+            console.log('IP saved:', ip);
         } catch (error) {
-            console.error('Error:', error);
+            console.error('IP save error:', error);
         }
     }
     
