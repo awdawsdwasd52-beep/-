@@ -131,6 +131,12 @@
             color: #888;
         }
 
+        .slowmode-indicator {
+            font-size: 0.7rem;
+            color: #ffaa44;
+            margin-left: 10px;
+        }
+
         .chat-messages {
             flex: 1;
             overflow-y: auto;
@@ -146,7 +152,7 @@
             padding: 10px 15px;
             border-radius: 18px;
             word-wrap: break-word;
-            animation: fadeIn 0.3s ease;
+            animation: fadeIn 0.2s ease;
             position: relative;
         }
 
@@ -154,7 +160,7 @@
             padding: 5px;
         }
 
-        .message.media-message img {
+        .message.media-message img, .message.media-message video {
             max-width: 300px;
             max-height: 300px;
             border-radius: 10px;
@@ -364,7 +370,7 @@
             margin: 50px auto;
             padding: 20px;
             width: 90%;
-            max-width: 500px;
+            max-width: 600px;
             border-radius: 10px;
             border: 1px solid #2a2a2a;
         }
@@ -383,6 +389,41 @@
             color: white;
             font-size: 1.5rem;
             cursor: pointer;
+        }
+
+        .channel-permissions {
+            margin: 15px 0;
+            padding: 15px;
+            background: #1a1a1a;
+            border-radius: 8px;
+        }
+
+        .permission-group {
+            margin-bottom: 15px;
+        }
+
+        .permission-group label {
+            display: block;
+            color: white;
+            margin-bottom: 8px;
+        }
+
+        .permission-select {
+            width: 100%;
+            padding: 8px;
+            background: #2b2b2b;
+            border: 1px solid #3a3a3a;
+            color: white;
+            border-radius: 5px;
+        }
+
+        .slowmode-input {
+            width: 100px;
+            padding: 8px;
+            background: #2b2b2b;
+            border: 1px solid #3a3a3a;
+            color: white;
+            border-radius: 5px;
         }
 
         .profile-preview {
@@ -458,7 +499,7 @@
             color: white;
         }
 
-        .ban-btn, .mute-btn, .delete-btn, .edit-btn {
+        .ban-btn, .mute-btn, .delete-btn, .edit-btn, .config-btn {
             background: #2b2b2b;
             border: 1px solid #3a3a3a;
             padding: 5px 10px;
@@ -470,6 +511,7 @@
 
         .ban-btn:hover { background: #ff4444; }
         .mute-btn:hover { background: #ffaa44; }
+        .config-btn:hover { background: #44aa44; }
         
         input, select {
             background: #1a1a1a;
@@ -564,7 +606,7 @@
             color: white !important;
         }
         
-        .swal2-input, .swal2-select {
+        .swal2-input, .swal2-select, .swal2-file {
             background: #1a1a1a !important;
             border: 1px solid #2a2a2a !important;
             color: white !important;
@@ -575,6 +617,17 @@
             border: 1px solid #3a3a3a !important;
             color: white !important;
         }
+        
+        .file-upload-label {
+            display: inline-block;
+            padding: 10px 20px;
+            background: #2b2b2b;
+            border: 1px solid #3a3a3a;
+            border-radius: 25px;
+            cursor: pointer;
+            color: white;
+            margin: 5px;
+        }
     </style>
 </head>
 <body>
@@ -583,7 +636,7 @@
 <script>
     const ADMIN_USERNAME = "SStwendRT";
     let currentMessagesListener = null;
-    let currentChannelId = null;
+    let lastMessageTime = 0;
     
     const firebaseConfig = {
         apiKey: "AIzaSyB9XzL1XzL1XzL1XzL1XzL1XzL1XzL1",
@@ -609,6 +662,506 @@
     let currentChannel = null;
     let isAdmin = false;
     let messagesCache = new Map();
+    let channelConfigCache = new Map();
+    
+    function getDirectGifUrl(url) {
+        if (url.includes('tenor.com')) {
+            const match = url.match(/\/view\/(?:[^-]+-)*([a-zA-Z0-9]+)/);
+            if (match && match[1]) {
+                return `https://media.tenor.com/${match[1]}/tenor.gif`;
+            }
+        }
+        return url;
+    }
+    
+    async function uploadFileToImgBB(file) {
+        return new Promise((resolve, reject) => {
+            const formData = new FormData();
+            formData.append('image', file);
+            
+            fetch('https://api.imgbb.com/1/upload?key=YOUR_IMGBB_API_KEY', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    resolve(data.data.url);
+                } else {
+                    reject('Upload failed');
+                }
+            })
+            .catch(reject);
+        });
+    }
+    
+    async function uploadImageToCloudinary(file) {
+        return new Promise((resolve, reject) => {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('upload_preset', 'chat_upload');
+            
+            fetch('https://api.cloudinary.com/v1_1/demo/image/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.secure_url) {
+                    resolve(data.secure_url);
+                } else {
+                    reject('Upload failed');
+                }
+            })
+            .catch(reject);
+        });
+    }
+    
+    async function uploadFile(file) {
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                resolve(e.target.result);
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+    
+    async function showImageUploadDialog() {
+        const { value: choice } = await Swal.fire({
+            title: 'Upload Image',
+            input: 'select',
+            inputOptions: {
+                'url': 'Paste URL',
+                'file': 'Upload File'
+            },
+            inputPlaceholder: 'Choose option',
+            showCancelButton: true,
+            confirmButtonText: 'Next',
+            cancelButtonText: 'Cancel'
+        });
+        
+        if (choice === 'url') {
+            const { value: url } = await Swal.fire({
+                title: 'Image URL',
+                input: 'url',
+                inputPlaceholder: 'https://example.com/image.jpg',
+                showCancelButton: true,
+                confirmButtonText: 'Send'
+            });
+            if (url) {
+                sendMessage(url, 'image');
+            }
+        } else if (choice === 'file') {
+            const { value: file } = await Swal.fire({
+                title: 'Select Image',
+                input: 'file',
+                inputAttributes: {
+                    'accept': 'image/*',
+                    'aria-label': 'Choose image'
+                },
+                showCancelButton: true,
+                confirmButtonText: 'Upload'
+            });
+            if (file) {
+                const imageUrl = await uploadFile(file);
+                sendMessage(imageUrl, 'image');
+            }
+        }
+    }
+    
+    async function showGifUploadDialog() {
+        const { value: choice } = await Swal.fire({
+            title: 'Upload GIF',
+            input: 'select',
+            inputOptions: {
+                'url': 'Paste GIF URL',
+                'file': 'Upload GIF File'
+            },
+            inputPlaceholder: 'Choose option',
+            showCancelButton: true,
+            confirmButtonText: 'Next',
+            cancelButtonText: 'Cancel'
+        });
+        
+        if (choice === 'url') {
+            const { value: url } = await Swal.fire({
+                title: 'GIF URL',
+                input: 'url',
+                inputPlaceholder: 'https://example.com/animation.gif or Tenor link',
+                showCancelButton: true,
+                confirmButtonText: 'Send'
+            });
+            if (url) {
+                const directUrl = getDirectGifUrl(url);
+                sendMessage(directUrl, 'gif');
+            }
+        } else if (choice === 'file') {
+            const { value: file } = await Swal.fire({
+                title: 'Select GIF',
+                input: 'file',
+                inputAttributes: {
+                    'accept': 'image/gif',
+                    'aria-label': 'Choose GIF'
+                },
+                showCancelButton: true,
+                confirmButtonText: 'Upload'
+            });
+            if (file) {
+                const gifUrl = await uploadFile(file);
+                sendMessage(gifUrl, 'gif');
+            }
+        }
+    }
+    
+    async function showAvatarUploadDialog() {
+        const { value: choice } = await Swal.fire({
+            title: 'Upload Avatar',
+            input: 'select',
+            inputOptions: {
+                'url': 'Paste URL',
+                'file': 'Upload File'
+            },
+            inputPlaceholder: 'Choose option',
+            showCancelButton: true,
+            confirmButtonText: 'Next',
+            cancelButtonText: 'Cancel'
+        });
+        
+        if (choice === 'url') {
+            const { value: url } = await Swal.fire({
+                title: 'Avatar URL',
+                input: 'url',
+                inputPlaceholder: 'https://example.com/avatar.jpg',
+                showCancelButton: true,
+                confirmButtonText: 'Save'
+            });
+            if (url) {
+                await usersRef.child(currentUser.id).update({ avatar: url });
+                currentUser.avatar = url;
+                Swal.fire('Success', 'Avatar updated', 'success');
+                renderMainApp();
+            }
+        } else if (choice === 'file') {
+            const { value: file } = await Swal.fire({
+                title: 'Select Image',
+                input: 'file',
+                inputAttributes: {
+                    'accept': 'image/*',
+                    'aria-label': 'Choose image'
+                },
+                showCancelButton: true,
+                confirmButtonText: 'Upload'
+            });
+            if (file) {
+                const avatarUrl = await uploadFile(file);
+                await usersRef.child(currentUser.id).update({ avatar: avatarUrl });
+                currentUser.avatar = avatarUrl;
+                Swal.fire('Success', 'Avatar updated', 'success');
+                renderMainApp();
+            }
+        }
+    }
+    
+    async function checkChannelPermissions(channelId, userId, action = 'send') {
+        const channelSnapshot = await channelsRef.child(channelId).once('value');
+        const channel = channelSnapshot.val();
+        if (!channel) return true;
+        
+        if (channel.owner === userId) return true;
+        
+        const userRoleSnapshot = await userRolesRef.child(userId).once('value');
+        const userRoleId = userRoleSnapshot.val();
+        
+        if (action === 'send') {
+            if (channel.allowedToSend === 'all') return true;
+            if (channel.allowedToSend === 'roles' && userRoleId && channel.allowedRoles?.includes(userRoleId)) return true;
+            if (channel.allowedToSend === 'users' && channel.allowedUsers?.includes(userId)) return true;
+            return false;
+        } else if (action === 'view') {
+            if (channel.allowedToView === 'all') return true;
+            if (channel.allowedToView === 'roles' && userRoleId && channel.viewRoles?.includes(userRoleId)) return true;
+            if (channel.allowedToView === 'users' && channel.viewUsers?.includes(userId)) return true;
+            return false;
+        }
+        return true;
+    }
+    
+    async function checkSlowmode(channelId, userId) {
+        const channelSnapshot = await channelsRef.child(channelId).once('value');
+        const channel = channelSnapshot.val();
+        if (!channel || !channel.slowmode || channel.slowmode === 0) return true;
+        
+        const lastMsgSnapshot = await messagesRef.child(channelId).orderByChild('timestamp').limitToLast(1).once('value');
+        let lastTime = 0;
+        lastMsgSnapshot.forEach(msg => {
+            if (msg.val().userId === userId) {
+                lastTime = msg.val().timestamp;
+            }
+        });
+        
+        const timeSince = Date.now() - lastTime;
+        if (timeSince < channel.slowmode * 1000) {
+            const waitSeconds = Math.ceil((channel.slowmode * 1000 - timeSince) / 1000);
+            Swal.fire('Slow Mode', `Please wait ${waitSeconds} seconds before sending another message`, 'warning');
+            return false;
+        }
+        return true;
+    }
+    
+    async function configureChannel(channelId, channelName) {
+        const channelSnapshot = await channelsRef.child(channelId).once('value');
+        const channel = channelSnapshot.val() || {};
+        
+        const rolesSnapshot = await rolesRef.once('value');
+        const roles = [];
+        rolesSnapshot.forEach(child => {
+            roles.push({ id: child.key, name: child.val().name });
+        });
+        
+        const usersSnapshot = await usersRef.once('value');
+        const users = [];
+        usersSnapshot.forEach(child => {
+            users.push({ id: child.key, name: child.val().displayName || child.val().username });
+        });
+        
+        const { value: formValues } = await Swal.fire({
+            title: `Configure #${channelName}`,
+            html: `
+                <div class="channel-permissions">
+                    <div class="permission-group">
+                        <label>Who can view this channel?</label>
+                        <select id="viewPermission" class="permission-select">
+                            <option value="all" ${channel.allowedToView === 'all' ? 'selected' : ''}>Everyone</option>
+                            <option value="roles" ${channel.allowedToView === 'roles' ? 'selected' : ''}>Specific Roles</option>
+                            <option value="users" ${channel.allowedToView === 'users' ? 'selected' : ''}>Specific Users</option>
+                        </select>
+                    </div>
+                    <div id="viewRolesContainer" class="permission-group" style="display: ${channel.allowedToView === 'roles' ? 'block' : 'none'}">
+                        <label>Select roles:</label>
+                        <select id="viewRoles" multiple class="permission-select" style="height: 100px;">
+                            ${roles.map(r => `<option value="${r.id}" ${channel.viewRoles?.includes(r.id) ? 'selected' : ''}>${r.name}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div id="viewUsersContainer" class="permission-group" style="display: ${channel.allowedToView === 'users' ? 'block' : 'none'}">
+                        <label>Select users:</label>
+                        <select id="viewUsers" multiple class="permission-select" style="height: 100px;">
+                            ${users.map(u => `<option value="${u.id}" ${channel.viewUsers?.includes(u.id) ? 'selected' : ''}>${u.name}</option>`).join('')}
+                        </select>
+                    </div>
+                    
+                    <div class="permission-group" style="margin-top: 20px;">
+                        <label>Who can send messages?</label>
+                        <select id="sendPermission" class="permission-select">
+                            <option value="all" ${channel.allowedToSend === 'all' ? 'selected' : ''}>Everyone</option>
+                            <option value="roles" ${channel.allowedToSend === 'roles' ? 'selected' : ''}>Specific Roles</option>
+                            <option value="users" ${channel.allowedToSend === 'users' ? 'selected' : ''}>Specific Users</option>
+                        </select>
+                    </div>
+                    <div id="sendRolesContainer" class="permission-group" style="display: ${channel.allowedToSend === 'roles' ? 'block' : 'none'}">
+                        <label>Select roles:</label>
+                        <select id="sendRoles" multiple class="permission-select" style="height: 100px;">
+                            ${roles.map(r => `<option value="${r.id}" ${channel.allowedRoles?.includes(r.id) ? 'selected' : ''}>${r.name}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div id="sendUsersContainer" class="permission-group" style="display: ${channel.allowedToSend === 'users' ? 'block' : 'none'}">
+                        <label>Select users:</label>
+                        <select id="sendUsers" multiple class="permission-select" style="height: 100px;">
+                            ${users.map(u => `<option value="${u.id}" ${channel.allowedUsers?.includes(u.id) ? 'selected' : ''}>${u.name}</option>`).join('')}
+                        </select>
+                    </div>
+                    
+                    <div class="permission-group" style="margin-top: 20px;">
+                        <label>Slow Mode (seconds between messages):</label>
+                        <input id="slowmode" type="number" class="slowmode-input" value="${channel.slowmode || 0}" min="0" step="1">
+                        <span style="color: #888; margin-left: 10px;">0 = disabled</span>
+                    </div>
+                </div>
+            `,
+            showCancelButton: true,
+            confirmButtonText: 'Save',
+            cancelButtonText: 'Cancel',
+            didOpen: () => {
+                const viewSelect = document.getElementById('viewPermission');
+                const sendSelect = document.getElementById('sendPermission');
+                
+                viewSelect.onchange = () => {
+                    document.getElementById('viewRolesContainer').style.display = viewSelect.value === 'roles' ? 'block' : 'none';
+                    document.getElementById('viewUsersContainer').style.display = viewSelect.value === 'users' ? 'block' : 'none';
+                };
+                
+                sendSelect.onchange = () => {
+                    document.getElementById('sendRolesContainer').style.display = sendSelect.value === 'roles' ? 'block' : 'none';
+                    document.getElementById('sendUsersContainer').style.display = sendSelect.value === 'users' ? 'block' : 'none';
+                };
+            },
+            preConfirm: () => {
+                const viewPermission = document.getElementById('viewPermission').value;
+                const sendPermission = document.getElementById('sendPermission').value;
+                const slowmode = parseInt(document.getElementById('slowmode').value) || 0;
+                
+                const viewRoles = viewPermission === 'roles' ? 
+                    Array.from(document.getElementById('viewRoles').selectedOptions).map(opt => opt.value) : [];
+                const viewUsers = viewPermission === 'users' ? 
+                    Array.from(document.getElementById('viewUsers').selectedOptions).map(opt => opt.value) : [];
+                const sendRoles = sendPermission === 'roles' ? 
+                    Array.from(document.getElementById('sendRoles').selectedOptions).map(opt => opt.value) : [];
+                const sendUsers = sendPermission === 'users' ? 
+                    Array.from(document.getElementById('sendUsers').selectedOptions).map(opt => opt.value) : [];
+                
+                return { viewPermission, sendPermission, viewRoles, viewUsers, sendRoles, sendUsers, slowmode };
+            }
+        });
+        
+        if (formValues) {
+            await channelsRef.child(channelId).update({
+                allowedToView: formValues.viewPermission,
+                viewRoles: formValues.viewRoles,
+                viewUsers: formValues.viewUsers,
+                allowedToSend: formValues.sendPermission,
+                allowedRoles: formValues.sendRoles,
+                allowedUsers: formValues.sendUsers,
+                slowmode: formValues.slowmode
+            });
+            Swal.fire('Success', 'Channel configuration saved', 'success');
+        }
+    }
+    
+    async function createChannelWithConfig() {
+        const { value: channelName } = await Swal.fire({
+            title: 'Create Channel',
+            input: 'text',
+            inputPlaceholder: 'Channel name',
+            showCancelButton: true,
+            confirmButtonText: 'Next',
+            cancelButtonText: 'Cancel'
+        });
+        
+        if (!channelName) return;
+        
+        const rolesSnapshot = await rolesRef.once('value');
+        const roles = [];
+        rolesSnapshot.forEach(child => {
+            roles.push({ id: child.key, name: child.val().name });
+        });
+        
+        const usersSnapshot = await usersRef.once('value');
+        const users = [];
+        usersSnapshot.forEach(child => {
+            users.push({ id: child.key, name: child.val().displayName || child.val().username });
+        });
+        
+        const { value: formValues } = await Swal.fire({
+            title: `Configure #${channelName}`,
+            html: `
+                <div class="channel-permissions">
+                    <div class="permission-group">
+                        <label>Who can view this channel?</label>
+                        <select id="viewPermission" class="permission-select">
+                            <option value="all">Everyone</option>
+                            <option value="roles">Specific Roles</option>
+                            <option value="users">Specific Users</option>
+                        </select>
+                    </div>
+                    <div id="viewRolesContainer" class="permission-group" style="display: none">
+                        <label>Select roles:</label>
+                        <select id="viewRoles" multiple class="permission-select" style="height: 100px;">
+                            ${roles.map(r => `<option value="${r.id}">${r.name}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div id="viewUsersContainer" class="permission-group" style="display: none">
+                        <label>Select users:</label>
+                        <select id="viewUsers" multiple class="permission-select" style="height: 100px;">
+                            ${users.map(u => `<option value="${u.id}">${u.name}</option>`).join('')}
+                        </select>
+                    </div>
+                    
+                    <div class="permission-group" style="margin-top: 20px;">
+                        <label>Who can send messages?</label>
+                        <select id="sendPermission" class="permission-select">
+                            <option value="all">Everyone</option>
+                            <option value="roles">Specific Roles</option>
+                            <option value="users">Specific Users</option>
+                        </select>
+                    </div>
+                    <div id="sendRolesContainer" class="permission-group" style="display: none">
+                        <label>Select roles:</label>
+                        <select id="sendRoles" multiple class="permission-select" style="height: 100px;">
+                            ${roles.map(r => `<option value="${r.id}">${r.name}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div id="sendUsersContainer" class="permission-group" style="display: none">
+                        <label>Select users:</label>
+                        <select id="sendUsers" multiple class="permission-select" style="height: 100px;">
+                            ${users.map(u => `<option value="${u.id}">${u.name}</option>`).join('')}
+                        </select>
+                    </div>
+                    
+                    <div class="permission-group" style="margin-top: 20px;">
+                        <label>Slow Mode (seconds between messages):</label>
+                        <input id="slowmode" type="number" class="slowmode-input" value="0" min="0" step="1">
+                        <span style="color: #888; margin-left: 10px;">0 = disabled</span>
+                    </div>
+                </div>
+            `,
+            showCancelButton: true,
+            confirmButtonText: 'Create',
+            cancelButtonText: 'Cancel',
+            didOpen: () => {
+                const viewSelect = document.getElementById('viewPermission');
+                const sendSelect = document.getElementById('sendPermission');
+                
+                viewSelect.onchange = () => {
+                    document.getElementById('viewRolesContainer').style.display = viewSelect.value === 'roles' ? 'block' : 'none';
+                    document.getElementById('viewUsersContainer').style.display = viewSelect.value === 'users' ? 'block' : 'none';
+                };
+                
+                sendSelect.onchange = () => {
+                    document.getElementById('sendRolesContainer').style.display = sendSelect.value === 'roles' ? 'block' : 'none';
+                    document.getElementById('sendUsersContainer').style.display = sendSelect.value === 'users' ? 'block' : 'none';
+                };
+            },
+            preConfirm: () => {
+                const viewPermission = document.getElementById('viewPermission').value;
+                const sendPermission = document.getElementById('sendPermission').value;
+                const slowmode = parseInt(document.getElementById('slowmode').value) || 0;
+                
+                const viewRoles = viewPermission === 'roles' ? 
+                    Array.from(document.getElementById('viewRoles').selectedOptions).map(opt => opt.value) : [];
+                const viewUsers = viewPermission === 'users' ? 
+                    Array.from(document.getElementById('viewUsers').selectedOptions).map(opt => opt.value) : [];
+                const sendRoles = sendPermission === 'roles' ? 
+                    Array.from(document.getElementById('sendRoles').selectedOptions).map(opt => opt.value) : [];
+                const sendUsers = sendPermission === 'users' ? 
+                    Array.from(document.getElementById('sendUsers').selectedOptions).map(opt => opt.value) : [];
+                
+                return { viewPermission, sendPermission, viewRoles, viewUsers, sendRoles, sendUsers, slowmode };
+            }
+        });
+        
+        if (formValues) {
+            const channelId = channelsRef.push().key;
+            await channelsRef.child(channelId).set({
+                name: channelName.toLowerCase().replace(/\s/g, '-'),
+                displayName: channelName,
+                createdBy: currentUser.username,
+                createdAt: Date.now(),
+                owner: currentUser.id,
+                allowedToView: formValues.viewPermission,
+                viewRoles: formValues.viewRoles,
+                viewUsers: formValues.viewUsers,
+                allowedToSend: formValues.sendPermission,
+                allowedRoles: formValues.sendRoles,
+                allowedUsers: formValues.sendUsers,
+                slowmode: formValues.slowmode
+            });
+            
+            Swal.fire('Success', `Channel #${channelName} created`, 'success');
+            loadChannelsList();
+            loadChannelsSidebar();
+            switchChannel(channelId);
+        }
+    }
     
     async function loadMembers() {
         const membersList = document.getElementById('membersList');
@@ -668,7 +1221,11 @@
                 name: 'general',
                 displayName: 'General',
                 createdBy: 'system',
-                createdAt: Date.now()
+                createdAt: Date.now(),
+                owner: null,
+                allowedToView: 'all',
+                allowedToSend: 'all',
+                slowmode: 0
             });
             currentChannel = defaultChannel.key;
         }
@@ -680,19 +1237,44 @@
         
         channels.sort((a, b) => a.createdAt - b.createdAt);
         
-        channels.forEach(channel => {
+        for (const channel of channels) {
+            const canView = await checkChannelPermissions(channel.key, currentUser.id, 'view');
+            if (!canView && channel.key !== currentChannel) continue;
+            
             const channelDiv = document.createElement('div');
             channelDiv.className = `channel-item ${currentChannel === channel.key ? 'active' : ''}`;
             channelDiv.textContent = `# ${channel.displayName || channel.name}`;
             channelDiv.onclick = () => switchChannel(channel.key);
             channelsList.appendChild(channelDiv);
-        });
+        }
         
         if (!currentChannel && channels.length > 0) {
-            currentChannel = channels[0].key;
+            for (const channel of channels) {
+                const canView = await checkChannelPermissions(channel.key, currentUser.id, 'view');
+                if (canView) {
+                    currentChannel = channel.key;
+                    break;
+                }
+            }
         }
         
         updateChannelName();
+        updateSlowmodeIndicator();
+    }
+    
+    function updateSlowmodeIndicator() {
+        const indicator = document.getElementById('slowmodeIndicator');
+        if (!indicator) return;
+        
+        channelsRef.child(currentChannel).once('value', (snapshot) => {
+            const channel = snapshot.val();
+            if (channel && channel.slowmode && channel.slowmode > 0) {
+                indicator.textContent = `Slow Mode: ${channel.slowmode}s`;
+                indicator.style.display = 'inline';
+            } else {
+                indicator.style.display = 'none';
+            }
+        });
     }
     
     function updateChannelName() {
@@ -701,19 +1283,25 @@
             const channel = snapshot.val();
             if (channel) {
                 document.getElementById('channelName').textContent = `# ${channel.displayName || channel.name}`;
+                updateSlowmodeIndicator();
             }
         });
     }
     
     async function switchChannel(channelId) {
+        const canView = await checkChannelPermissions(channelId, currentUser.id, 'view');
+        if (!canView) {
+            Swal.fire('Access Denied', 'You do not have permission to view this channel', 'error');
+            return;
+        }
+        
         if (currentChannel === channelId) return;
         
-        if (currentMessagesListener) {
+        if (currentMessagesListener && currentChannel) {
             messagesRef.child(currentChannel).off('child_added', currentMessagesListener);
         }
         
         currentChannel = channelId;
-        currentChannelId = channelId;
         
         const messagesContainer = document.getElementById('chatMessages');
         messagesContainer.innerHTML = '';
@@ -752,42 +1340,26 @@
             
             if (messagesCache.has(messageKey)) return;
             
+            const canView = await checkChannelPermissions(message.channelId, currentUser.id, 'view');
+            if (!canView) return;
+            
             await displayMessage(message, messageKey);
             messagesCache.set(messageKey, message);
             scrollToBottom();
         });
     }
     
-    async function sendMessageWithMedia(type) {
-        const { value: url } = await Swal.fire({
-            title: type === 'image' ? 'Insert image URL' : 'Insert GIF URL',
-            input: 'url',
-            inputPlaceholder: 'https://example.com/image.jpg',
-            showCancelButton: true,
-            confirmButtonText: 'Send',
-            cancelButtonText: 'Cancel',
-            background: '#0a0a0a',
-            color: 'white'
-        });
-        
-        if (url && isValidUrl(url)) {
-            sendMessage(url, type);
-        } else if (url) {
-            Swal.fire('Error', 'Invalid URL format', 'error');
-        }
-    }
-    
-    function isValidUrl(string) {
-        try {
-            new URL(string);
-            return true;
-        } catch (_) {
-            return false;
-        }
-    }
-    
     async function sendMessage(text, type = 'text') {
         if (!text || !text.trim() || !currentUser || !currentChannel) return;
+        
+        const canSend = await checkChannelPermissions(currentChannel, currentUser.id, 'send');
+        if (!canSend) {
+            Swal.fire('Access Denied', 'You do not have permission to send messages in this channel', 'error');
+            return;
+        }
+        
+        const slowmodeOk = await checkSlowmode(currentChannel, currentUser.id);
+        if (!slowmodeOk) return;
         
         const isMuted = await mutesRef.child(currentUser.id).once('value');
         if (isMuted.exists()) {
@@ -822,7 +1394,6 @@
             document.getElementById('messageInput').value = '';
         } catch (error) {
             console.error('Send error:', error);
-            Swal.fire('Error', 'Failed to send message', 'error');
         } finally {
             sendBtn.disabled = false;
         }
@@ -855,10 +1426,8 @@
         const avatarUrl = message.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=2b2b2b&color=white&size=24`;
         
         let content = '';
-        if (message.type === 'image') {
-            content = `<img src="${escapeHtml(message.text)}" onclick="window.open('${escapeHtml(message.text)}', '_blank')" style="max-width: 300px; max-height: 300px; border-radius: 10px; cursor: pointer;" onerror="this.src='https://placehold.co/300x200/2b2b2b/white?text=Invalid+Image'">`;
-        } else if (message.type === 'gif') {
-            content = `<img src="${escapeHtml(message.text)}" style="max-width: 300px; max-height: 300px; border-radius: 10px; cursor: pointer;" onclick="window.open('${escapeHtml(message.text)}', '_blank')" onerror="this.src='https://placehold.co/300x200/2b2b2b/white?text=Invalid+GIF'">`;
+        if (message.type === 'image' || message.type === 'gif') {
+            content = `<img src="${escapeHtml(message.text)}" onclick="window.open('${escapeHtml(message.text)}', '_blank')" style="max-width: 300px; max-height: 300px; border-radius: 10px; cursor: pointer;" onerror="this.src='https://placehold.co/300x200/2b2b2b/white?text=Failed+to+load'">`;
         } else {
             content = `<div class="message-text">${escapeHtml(message.text)}</div>`;
         }
@@ -895,64 +1464,29 @@
             html: `
                 <div class="profile-preview">
                     <img id="avatarPreview" class="profile-avatar-preview" src="${currentUser.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.displayName || currentUser.username)}&background=2b2b2b&color=white&size=100`}">
+                    <button class="file-upload-label" onclick="window.showAvatarUploadDialog()">Change Avatar</button>
                 </div>
                 <input id="displayNameInput" class="profile-input" placeholder="Display Name" value="${escapeHtml(currentUser.displayName || currentUser.username)}">
-                <input id="avatarUrlInput" class="profile-input" placeholder="Avatar URL (optional)" value="${currentUser.avatar || ''}">
             `,
             showCancelButton: true,
             confirmButtonText: 'Save',
             cancelButtonText: 'Cancel',
-            didOpen: () => {
-                const avatarUrlInput = document.getElementById('avatarUrlInput');
-                const avatarPreview = document.getElementById('avatarPreview');
-                
-                avatarUrlInput.oninput = () => {
-                    if (avatarUrlInput.value) {
-                        avatarPreview.src = avatarUrlInput.value;
-                        avatarPreview.onerror = () => {
-                            avatarPreview.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(document.getElementById('displayNameInput').value)}&background=2b2b2b&color=white&size=100`;
-                        };
-                    } else {
-                        const name = document.getElementById('displayNameInput').value;
-                        avatarPreview.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=2b2b2b&color=white&size=100`;
-                    }
-                };
-                
-                const displayNameInput = document.getElementById('displayNameInput');
-                displayNameInput.oninput = () => {
-                    if (!avatarUrlInput.value) {
-                        avatarPreview.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(displayNameInput.value)}&background=2b2b2b&color=white&size=100`;
-                    }
-                };
-            },
             preConfirm: () => {
                 const displayName = document.getElementById('displayNameInput').value.trim();
-                const avatarUrl = document.getElementById('avatarUrlInput').value.trim();
-                
                 if (!displayName) {
                     Swal.showValidationMessage('Display name is required');
                     return false;
                 }
-                
-                return { displayName, avatarUrl: avatarUrl || null };
+                return { displayName };
             }
         }).then(async (result) => {
             if (result.value) {
                 await usersRef.child(currentUser.id).update({
-                    displayName: result.value.displayName,
-                    avatar: result.value.avatarUrl
+                    displayName: result.value.displayName
                 });
-                
                 currentUser.displayName = result.value.displayName;
-                currentUser.avatar = result.value.avatarUrl;
-                
                 Swal.fire('Success', 'Profile updated', 'success');
-                loadMembers();
-                
-                const messagesContainer = document.getElementById('chatMessages');
-                messagesContainer.innerHTML = '';
-                messagesCache.clear();
-                await loadMessagesForChannel(currentChannel);
+                renderMainApp();
             }
         });
     }
@@ -1065,6 +1599,7 @@
             channelDiv.innerHTML = `
                 <span># ${escapeHtml(channel.displayName || channel.name)}</span>
                 <div>
+                    <button class="config-btn" onclick="configureChannel('${child.key}', '${escapeHtml(channel.displayName || channel.name)}')">⚙️</button>
                     <button class="edit-btn" onclick="editChannel('${child.key}', '${escapeHtml(channel.displayName || channel.name)}')">Edit</button>
                     <button class="delete-btn" onclick="deleteChannel('${child.key}')">Delete</button>
                 </div>
@@ -1232,30 +1767,6 @@
         }
     }
     
-    function createChannel() {
-        Swal.fire({
-            title: 'Create Channel',
-            input: 'text',
-            inputPlaceholder: 'Channel name',
-            showCancelButton: true,
-            confirmButtonText: 'Create',
-            cancelButtonText: 'Cancel'
-        }).then(async (result) => {
-            if (result.value) {
-                const channelName = result.value.toLowerCase().replace(/\s/g, '-');
-                await channelsRef.push({
-                    name: channelName,
-                    displayName: result.value,
-                    createdBy: currentUser.username,
-                    createdAt: Date.now()
-                });
-                Swal.fire('Success', `Channel #${result.value} created`, 'success');
-                loadChannelsList();
-                loadChannelsSidebar();
-            }
-        });
-    }
-    
     async function editChannel(channelId, oldName) {
         const { value: newName } = await Swal.fire({
             title: 'Edit Channel',
@@ -1325,31 +1836,31 @@
                 <div class="channels-sidebar">
                     <div class="channels-header">Channels</div>
                     <div class="channels-list" id="channelsList"></div>
-                    ${isAdmin ? '<div class="add-channel-btn" onclick="createChannel()">+ Create Channel</div>' : ''}
+                    ${isAdmin ? '<div class="add-channel-btn" onclick="window.createChannelWithConfig()">+ Create Channel</div>' : ''}
                 </div>
                 
                 <div class="main-container">
                     <div class="chat-header">
                         <div class="channel-info">
                             <h2 id="channelName"># Loading...</h2>
-                            <p>Text channel</p>
+                            <p>Text channel <span id="slowmodeIndicator" class="slowmode-indicator" style="display:none;"></span></p>
                         </div>
                         <div class="user-profile">
                             <img src="${avatarUrl}" style="width: 32px; height: 32px; border-radius: 50%;" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=2b2b2b&color=white&size=32'">
-                            <button class="profile-btn" onclick="showProfileModal()">${escapeHtml(displayName)}</button>
+                            <button class="profile-btn" onclick="window.showProfileModal()">${escapeHtml(displayName)}</button>
                             <button class="logout-btn" onclick="logout()">Logout</button>
                         </div>
                     </div>
                     <div class="chat-messages" id="chatMessages"></div>
                     <div class="bottom-panel">
-                        ${isAdmin ? '<button class="admin-btn" onclick="showAdminPanel()">Admin Panel</button>' : ''}
+                        ${isAdmin ? '<button class="admin-btn" onclick="window.showAdminPanel()">Admin Panel</button>' : ''}
                         <div class="message-input-wrapper">
                             <input type="text" id="messageInput" placeholder="Type a message...">
                             <div class="media-buttons">
-                                <button class="media-btn" onclick="sendMessageWithMedia(\'image\')">Image</button>
-                                <button class="media-btn" onclick="sendMessageWithMedia(\'gif\')">GIF</button>
+                                <button class="media-btn" onclick="window.showImageUploadDialog()">Image</button>
+                                <button class="media-btn" onclick="window.showGifUploadDialog()">GIF</button>
                             </div>
-                            <button id="sendButton" onclick="sendMessage(document.getElementById(\'messageInput\').value)">Send</button>
+                            <button id="sendButton" onclick="sendMessage(document.getElementById('messageInput').value)">Send</button>
                         </div>
                     </div>
                 </div>
@@ -1376,7 +1887,7 @@
                         <div class="user-list" id="usersList"></div>
                     </div>
                     <div id="rolesPanel" class="admin-panel">
-                        <button class="add-channel-btn" onclick="createRole()">+ Create Role</button>
+                        <button class="add-channel-btn" onclick="window.createRole()">+ Create Role</button>
                         <div class="role-list" id="rolesList"></div>
                     </div>
                     <div id="channelsPanel" class="admin-panel">
@@ -1505,9 +2016,15 @@
                     
                     const snapshot = await channelsRef.once('value');
                     if (snapshot.numChildren() > 0) {
-                        snapshot.forEach(child => {
-                            if (!currentChannel) currentChannel = child.key;
-                        });
+                        for (const child of Object.values(snapshot.val() || {})) {
+                            if (!currentChannel) {
+                                const canView = await checkChannelPermissions(child.key, currentUser.id, 'view');
+                                if (canView) {
+                                    currentChannel = child.key;
+                                    break;
+                                }
+                            }
+                        }
                     }
                     
                     renderMainApp();
@@ -1546,9 +2063,15 @@
                 
                 const snapshot = await channelsRef.once('value');
                 if (snapshot.numChildren() > 0) {
-                    snapshot.forEach(child => {
-                        if (!currentChannel) currentChannel = child.key;
-                    });
+                    for (const child of Object.values(snapshot.val() || {})) {
+                        if (!currentChannel) {
+                            const canView = await checkChannelPermissions(child.key, currentUser.id, 'view');
+                            if (canView) {
+                                currentChannel = child.key;
+                                break;
+                            }
+                        }
+                    }
                 }
                 
                 renderMainApp();
@@ -1582,11 +2105,14 @@
     window.createRole = createRole;
     window.editRole = editRole;
     window.deleteRole = deleteRole;
-    window.createChannel = createChannel;
+    window.createChannelWithConfig = createChannelWithConfig;
+    window.configureChannel = configureChannel;
     window.editChannel = editChannel;
     window.deleteChannel = deleteChannel;
     window.showAdminPanel = showAdminPanel;
-    window.sendMessageWithMedia = sendMessageWithMedia;
+    window.showImageUploadDialog = showImageUploadDialog;
+    window.showGifUploadDialog = showGifUploadDialog;
+    window.showAvatarUploadDialog = showAvatarUploadDialog;
     window.sendMessage = sendMessage;
     window.switchAdminTab = switchAdminTab;
     window.logout = logout;
@@ -1624,9 +2150,15 @@
                     
                     const snapshot = await channelsRef.once('value');
                     if (snapshot.numChildren() > 0) {
-                        snapshot.forEach(child => {
-                            if (!currentChannel) currentChannel = child.key;
-                        });
+                        for (const [key, value] of Object.entries(snapshot.val() || {})) {
+                            if (!currentChannel) {
+                                const canView = await checkChannelPermissions(key, currentUser.id, 'view');
+                                if (canView) {
+                                    currentChannel = key;
+                                    break;
+                                }
+                            }
+                        }
                     }
                     
                     renderMainApp();
