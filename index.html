@@ -635,24 +635,25 @@
             padding: 20px;
         }
         
-        .load-more-trigger {
+        .load-more-indicator {
             text-align: center;
             padding: 10px;
-            color: #888;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        
-        .load-more-trigger:hover {
-            background: #1a1a1a;
-            color: white;
-        }
-        
-        .loading-more {
-            text-align: center;
-            color: #888;
-            padding: 10px;
+            color: #666;
             font-size: 0.8rem;
+            margin-bottom: 10px;
+        }
+        
+        .load-more-indicator.loading {
+            color: #ffaa44;
+        }
+        
+        .messages-loading-placeholder {
+            text-align: center;
+            padding: 15px;
+            color: #666;
+            font-size: 0.8rem;
+            margin-bottom: 5px;
+            background: transparent;
         }
     </style>
 </head>
@@ -666,6 +667,7 @@
     let hasMoreMessages = true;
     let oldestMessageTimestamp = null;
     let currentChannelLoadId = null;
+    let scrollListenerActive = false;
     
     const firebaseConfig = {
         apiKey: "AIzaSyB9XzL1XzL1XzL1XzL1XzL1XzL1XzL1",
@@ -1242,41 +1244,46 @@
         });
     }
     
-    // Новая функция загрузки сообщений с пагинацией (20 сообщений, подгрузка при скролле)
-    async function loadMessagesForChannel(channelId, loadOlder = false) {
-        if (!channelId) return;
-        
+    function setupScrollListener() {
         const messagesContainer = document.getElementById('chatMessages');
-        if (!messagesContainer) return;
+        if (!messagesContainer || scrollListenerActive) return;
         
-        if (!loadOlder) {
-            // Полная перезагрузка канала
-            messagesContainer.innerHTML = '';
-            hasMoreMessages = true;
-            oldestMessageTimestamp = null;
-            currentChannelLoadId = channelId;
-            isLoadingMore = false;
-            messagesCache.clear();
-        }
+        scrollListenerActive = true;
         
-        if (isLoadingMore) return;
-        if (!hasMoreMessages && loadOlder) return;
+        messagesContainer.addEventListener('scroll', async function() {
+            if (isLoadingMore || !hasMoreMessages) return;
+            
+            // Если скролл в верхней части (менее 100px до верха)
+            if (messagesContainer.scrollTop <= 50 && oldestMessageTimestamp) {
+                // Добавляем индикатор загрузки
+                const loadIndicator = document.getElementById('loadingOldMessagesIndicator');
+                if (!loadIndicator || loadIndicator.style.display !== 'block') {
+                    const indicator = document.createElement('div');
+                    indicator.id = 'loadingOldMessagesIndicator';
+                    indicator.className = 'load-more-indicator loading';
+                    indicator.textContent = 'Loading older messages...';
+                    indicator.style.display = 'block';
+                    messagesContainer.insertBefore(indicator, messagesContainer.firstChild);
+                    
+                    await loadOlderMessages();
+                    
+                    const indicatorToRemove = document.getElementById('loadingOldMessagesIndicator');
+                    if (indicatorToRemove) indicatorToRemove.remove();
+                }
+            }
+        });
+    }
+    
+    async function loadOlderMessages() {
+        if (isLoadingMore || !hasMoreMessages || !oldestMessageTimestamp || !currentChannelId) return;
         
         isLoadingMore = true;
         
         try {
-            let query;
-            if (!loadOlder) {
-                // Первая загрузка: последние 20 сообщений
-                query = messagesRef.child(channelId).orderByChild('timestamp').limitToLast(20);
-            } else {
-                // Загрузка старых: 20 сообщений старше oldestMessageTimestamp
-                if (!oldestMessageTimestamp) {
-                    isLoadingMore = false;
-                    return;
-                }
-                query = messagesRef.child(channelId).orderByChild('timestamp').endAt(oldestMessageTimestamp - 1).limitToLast(20);
-            }
+            const query = messagesRef.child(currentChannelId)
+                .orderByChild('timestamp')
+                .endAt(oldestMessageTimestamp - 1)
+                .limitToLast(20);
             
             const snapshot = await query.once('value');
             const messages = [];
@@ -1286,8 +1293,14 @@
             
             if (messages.length === 0) {
                 hasMoreMessages = false;
-                const trigger = document.querySelector('.load-more-trigger');
-                if (trigger) trigger.remove();
+                const endMessage = document.createElement('div');
+                endMessage.className = 'messages-loading-placeholder';
+                endMessage.textContent = '✨ You\'ve reached the beginning of the chat ✨';
+                const messagesContainer = document.getElementById('chatMessages');
+                if (messagesContainer && !messagesContainer.querySelector('.end-of-chat-indicator')) {
+                    endMessage.classList.add('end-of-chat-indicator');
+                    messagesContainer.insertBefore(endMessage, messagesContainer.firstChild);
+                }
                 isLoadingMore = false;
                 return;
             }
@@ -1301,35 +1314,90 @@
             
             if (messages.length < 20) hasMoreMessages = false;
             
-            if (loadOlder) {
-                // Удаляем триггер загрузки
-                const trigger = document.querySelector('.load-more-trigger');
-                if (trigger) trigger.remove();
-                
-                // Сохраняем позицию скролла
-                const oldScrollHeight = messagesContainer.scrollHeight;
-                const oldScrollTop = messagesContainer.scrollTop;
-                
-                // Добавляем старые сообщения в начало
-                for (let i = messages.length - 1; i >= 0; i--) {
-                    const msg = messages[i];
-                    if (!messagesCache.has(msg.key)) {
-                        const messageDiv = await displayMessageElement(msg);
-                        messagesContainer.insertBefore(messageDiv, messagesContainer.firstChild);
-                        messagesCache.set(msg.key, msg);
-                    }
+            const messagesContainer = document.getElementById('chatMessages');
+            const oldScrollHeight = messagesContainer.scrollHeight;
+            const oldScrollTop = messagesContainer.scrollTop;
+            
+            // Добавляем старые сообщения в начало
+            for (let i = messages.length - 1; i >= 0; i--) {
+                const msg = messages[i];
+                if (!messagesCache.has(msg.key)) {
+                    const messageDiv = await displayMessageElement(msg);
+                    messagesContainer.insertBefore(messageDiv, messagesContainer.firstChild);
+                    messagesCache.set(msg.key, msg);
                 }
-                
-                // Восстанавливаем позицию скролла
-                const newScrollHeight = messagesContainer.scrollHeight;
-                messagesContainer.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight);
-                
-                // Добавляем триггер снова, если есть еще сообщения
-                if (hasMoreMessages) {
-                    addLoadMoreTrigger();
-                }
-            } else {
-                // Первая загрузка: добавляем сообщения в правильном порядке (от старых к новым)
+            }
+            
+            // Восстанавливаем позицию скролла
+            const newScrollHeight = messagesContainer.scrollHeight;
+            messagesContainer.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight);
+            
+        } catch (error) {
+            console.error('Error loading older messages:', error);
+        } finally {
+            isLoadingMore = false;
+        }
+    }
+    
+    async function loadMessagesForChannel(channelId, isInitialLoad = true) {
+        if (!channelId) return;
+        
+        const messagesContainer = document.getElementById('chatMessages');
+        if (!messagesContainer) return;
+        
+        if (isInitialLoad) {
+            messagesContainer.innerHTML = '';
+            hasMoreMessages = true;
+            oldestMessageTimestamp = null;
+            currentChannelLoadId = channelId;
+            isLoadingMore = false;
+            messagesCache.clear();
+            
+            // Добавляем индикатор загрузки
+            const loadingDiv = document.createElement('div');
+            loadingDiv.id = 'initialLoadingIndicator';
+            loadingDiv.className = 'load-more-indicator';
+            loadingDiv.textContent = 'Loading messages...';
+            messagesContainer.appendChild(loadingDiv);
+        }
+        
+        if (isLoadingMore && !isInitialLoad) return;
+        
+        isLoadingMore = true;
+        
+        try {
+            // Загружаем последние 20 сообщений
+            const query = messagesRef.child(channelId).orderByChild('timestamp').limitToLast(20);
+            const snapshot = await query.once('value');
+            const messages = [];
+            snapshot.forEach(child => {
+                messages.push({ key: child.key, ...child.val() });
+            });
+            
+            if (isInitialLoad) {
+                const loadingDiv = document.getElementById('initialLoadingIndicator');
+                if (loadingDiv) loadingDiv.remove();
+            }
+            
+            if (messages.length === 0) {
+                const emptyDiv = document.createElement('div');
+                emptyDiv.className = 'messages-loading-placeholder';
+                emptyDiv.textContent = 'No messages yet. Be the first to send a message!';
+                messagesContainer.appendChild(emptyDiv);
+                hasMoreMessages = false;
+                isLoadingMore = false;
+                return;
+            }
+            
+            messages.sort((a, b) => a.timestamp - b.timestamp);
+            
+            if (messages.length > 0) {
+                oldestMessageTimestamp = messages[0].timestamp;
+            }
+            
+            if (messages.length < 20) hasMoreMessages = false;
+            
+            if (isInitialLoad) {
                 for (const msg of messages) {
                     if (!messagesCache.has(msg.key)) {
                         const messageDiv = await displayMessageElement(msg);
@@ -1338,39 +1406,30 @@
                     }
                 }
                 
-                // Добавляем триггер загрузки старых сообщений в начало
-                if (hasMoreMessages) {
-                    addLoadMoreTrigger();
-                }
-                
                 // Автоматический скролл вниз
                 setTimeout(() => {
                     scrollToBottom();
+                    setupScrollListener();
                 }, 100);
+            } else {
+                // Для не-первичной загрузки (если нужно)
+                for (const msg of messages) {
+                    if (!messagesCache.has(msg.key)) {
+                        const messageDiv = await displayMessageElement(msg);
+                        messagesContainer.appendChild(messageDiv);
+                        messagesCache.set(msg.key, msg);
+                    }
+                }
             }
         } catch (error) {
             console.error('Error loading messages:', error);
+            if (isInitialLoad) {
+                const loadingDiv = document.getElementById('initialLoadingIndicator');
+                if (loadingDiv) loadingDiv.remove();
+            }
         } finally {
             isLoadingMore = false;
         }
-    }
-    
-    function addLoadMoreTrigger() {
-        const messagesContainer = document.getElementById('chatMessages');
-        if (!messagesContainer) return;
-        
-        const existingTrigger = document.querySelector('.load-more-trigger');
-        if (existingTrigger) existingTrigger.remove();
-        
-        const triggerDiv = document.createElement('div');
-        triggerDiv.className = 'load-more-trigger';
-        triggerDiv.innerHTML = '⬆️ Load older messages ⬆️';
-        triggerDiv.onclick = async () => {
-            if (isLoadingMore || !hasMoreMessages) return;
-            triggerDiv.innerHTML = '<div class="loading-more">Loading older messages...</div>';
-            await loadMessagesForChannel(currentChannelId, true);
-        };
-        messagesContainer.insertBefore(triggerDiv, messagesContainer.firstChild);
     }
     
     async function displayMessageElement(message) {
@@ -1424,6 +1483,7 @@
         
         const messageDiv = await displayMessageElement({ ...message, key });
         messagesContainer.appendChild(messageDiv);
+        scrollToBottom();
     }
     
     function escapeHtml(text) {
@@ -1457,11 +1517,12 @@
         
         currentChannelId = channelId;
         
-        // Сбрасываем состояние пагинации
+        // Сбрасываем состояние
         hasMoreMessages = true;
         oldestMessageTimestamp = null;
         isLoadingMore = false;
         messagesCache.clear();
+        scrollListenerActive = false;
         
         const messagesContainer = document.getElementById('chatMessages');
         if (messagesContainer) {
@@ -1469,22 +1530,21 @@
         }
         
         await loadChannelsSidebar();
-        await loadMessagesForChannel(channelId, false);
+        await loadMessagesForChannel(channelId, true);
         updateChannelName();
         
         // Настраиваем listener для новых сообщений
-        currentMessagesListener = messagesRef.child(currentChannelId).orderByChild('timestamp').startAt(Date.now()).on('child_added', async function(snapshot) {
+        currentMessagesListener = messagesRef.child(currentChannelId).on('child_added', async function(snapshot) {
             const message = snapshot.val();
             const messageKey = snapshot.key;
             
             if (messagesCache.has(messageKey)) return;
             
-            const canView = await checkChannelPermissions(message.channelId, currentUser.id, 'view');
-            if (!canView) return;
+            const canViewMsg = await checkChannelPermissions(message.channelId, currentUser.id, 'view');
+            if (!canViewMsg) return;
             
             await displayMessage(message, messageKey);
             messagesCache.set(messageKey, message);
-            scrollToBottom();
         });
     }
     
